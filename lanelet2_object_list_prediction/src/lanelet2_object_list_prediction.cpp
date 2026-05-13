@@ -5,7 +5,8 @@
 namespace lanelet2_object_list_prediction {
 
 Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_object_list_prediction") {
-  this->declareAndLoadParameter("param", param_, "TODO", true, false, false, 0.0, 10.0, 1.0);
+  this->declareAndLoadParameter("ll2_map_server_name", ll2_map_server_name_, "Name of lanelet2_map_server node", false, false,
+                                true);
   this->setup();
 }
 
@@ -102,6 +103,9 @@ rcl_interfaces::msg::SetParametersResult Lanelet2ObjectListPrediction::parameter
 }
 
 void Lanelet2ObjectListPrediction::setup() {
+  // map interface
+  ll2_interface_ = std::make_unique<LL2MapInterface>(*this, ll2_map_server_name_);
+
   // callback for dynamic parameter configuration
   parameters_callback_ = this->add_on_set_parameters_callback(
       std::bind(&Lanelet2ObjectListPrediction::parametersCallback, this, std::placeholders::_1));
@@ -124,6 +128,16 @@ void Lanelet2ObjectListPrediction::topicCallback(const geometry_msgs::msg::Point
   out_msg = *msg;
   publisher_->publish(out_msg);
   RCLCPP_INFO(this->get_logger(), "Message published with stamp: '%d'", out_msg.header.stamp.sec);
+}
+
+bool Lanelet2ObjectListPrediction::checkMap(bool handle_update) {
+  bool map_status = ll2_interface_->map_loaded_;
+  // update routing graph on map update
+  if (handle_update && ll2_interface_->update_pending_ && ll2_interface_->map_loaded_) {
+    ll2_interface_->update_pending_ = false;
+    map_status = map_status && !ll2_interface_->update_pending_;
+  }
+  return map_status;
 }
 
 }  // namespace lanelet2_object_list_prediction

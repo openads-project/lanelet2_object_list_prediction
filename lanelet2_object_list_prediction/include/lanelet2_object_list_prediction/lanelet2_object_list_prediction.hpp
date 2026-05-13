@@ -7,6 +7,8 @@
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <rclcpp/rclcpp.hpp>
 
+#include <lanelet2_map_interface/lanelet2_map_interface.hpp>
+
 namespace lanelet2_object_list_prediction {
 
 template <typename C>
@@ -64,6 +66,14 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   void setup();
 
   /**
+   * @brief Checks if map is loaded and handles map updates
+   *
+   * @param[in] handle_update whether to handle map update
+   * @return whether map is loaded (and updated, if supposed to handle update)
+   */
+  bool checkMap(bool handle_update);
+
+  /**
    * @brief Processes messages received by a subscriber
    *
    * @param msg message
@@ -92,9 +102,14 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr publisher_;
 
   /**
-   * @brief Dummy parameter (parameter)
+   * @brief Lanelet2 map interface
    */
-  double param_ = 1.0;
+  std::unique_ptr<LL2MapInterface> ll2_interface_;
+
+  /**
+   * @brief Name of lanelet2_map_server node (parameter)
+   */
+  std::string ll2_map_server_name_ = "lanelet2_map_server";
 };
 
 }  // namespace lanelet2_object_list_prediction
