@@ -10,7 +10,7 @@ docker-ros:
       - remote: https://raw.githubusercontent.com/ika-rwth-aachen/docker-ros/main/.gitlab-ci/docker-ros.yml
     strategy: depend
   variables:
-    PLATFORM: amd64,arm64
+    PLATFORM: amd64
     TARGET: dev,run
     BASE_IMAGE: rwthika/ros2:jazzy
     RMW_IMPLEMENTATION: rmw_zenoh_cpp

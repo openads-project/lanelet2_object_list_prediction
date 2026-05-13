@@ -1,12 +1,21 @@
 #include <functional>
 
+#include <lanelet2_core/geometry/Lanelet.h>
+#include <lanelet2_core/geometry/LaneletMap.h>
+#include <tf2/exceptions.h>
 #include <lanelet2_object_list_prediction/lanelet2_object_list_prediction.hpp>
+#include <perception_msgs_utils/object_access.hpp>
+#include <tf2/time.hpp>
+#include <tf2_perception_msgs/tf2_perception_msgs.hpp>
 
 namespace lanelet2_object_list_prediction {
 
 Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_object_list_prediction") {
   this->declareAndLoadParameter("ll2_map_server_name", ll2_map_server_name_, "Name of lanelet2_map_server node", false, false,
                                 true);
+  this->declareAndLoadParameter("lanelet_match_max_distance_m", lanelet_match_max_distance_m_,
+                                "Maximum distance in meters for matching an object to a lanelet", true, false, false, 0.0, 100.0,
+                                0.1);
   this->setup();
 }
 
@@ -103,6 +112,10 @@ rcl_interfaces::msg::SetParametersResult Lanelet2ObjectListPrediction::parameter
 }
 
 void Lanelet2ObjectListPrediction::setup() {
+  // TF listener for transforming incoming object lists into the map frame
+  tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
   // map interface
   ll2_interface_ = std::make_unique<LL2MapInterface>(*this, ll2_map_server_name_);
 
@@ -123,11 +136,78 @@ void Lanelet2ObjectListPrediction::setup() {
 void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg::ObjectList::ConstSharedPtr& msg) {
   RCLCPP_INFO(this->get_logger(), "Message received with stamp: '%d'", msg->header.stamp.sec);
 
+  if (!checkMap(true)) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000, "Lanelet2 map is not loaded yet, skipping object list");
+    return;
+  }
+
+  perception_msgs::msg::ObjectList object_list_map_frame;
+  if (msg->header.frame_id != ll2_interface_->map_frame_id_) {
+    try {
+      object_list_map_frame = tf_buffer_->transform(*msg, ll2_interface_->map_frame_id_, tf2::durationFromSec(0.1));
+    } catch (tf2::TransformException& ex) {
+      RCLCPP_ERROR(this->get_logger(), "Could not transform object list from frame '%s' to frame '%s': %s",
+                   msg->header.frame_id.c_str(), ll2_interface_->map_frame_id_.c_str(), ex.what());
+      return;
+    }
+  } else {
+    object_list_map_frame = *msg;
+  }
+
+  const auto lanelet_matches_by_object = matchObjectsToLanelets(object_list_map_frame);
+  std::size_t matched_object_count = 0;
+  for (const auto& lanelet_matches : lanelet_matches_by_object) {
+    if (!lanelet_matches.empty()) {
+      ++matched_object_count;
+    }
+  }
+  RCLCPP_DEBUG(this->get_logger(), "Matched %zu/%zu objects to at least one lanelet", matched_object_count,
+               object_list_map_frame.objects.size());
+
   // publish message
   perception_msgs::msg::ObjectList out_msg;
-  out_msg = *msg;
+  out_msg = object_list_map_frame;
   publisher_->publish(out_msg);
   RCLCPP_INFO(this->get_logger(), "Message published with stamp: '%d'", out_msg.header.stamp.sec);
+}
+
+std::vector<std::vector<Lanelet2ObjectListPrediction::LaneletMatch>> Lanelet2ObjectListPrediction::matchObjectsToLanelets(
+    const perception_msgs::msg::ObjectList& object_list) const {
+  std::vector<std::vector<LaneletMatch>> matches_by_object(object_list.objects.size());
+
+  const auto map = ll2_interface_->getMapPtr();
+  if (map == nullptr) {
+    return matches_by_object;
+  }
+
+  for (std::size_t object_index = 0; object_index < object_list.objects.size(); ++object_index) {
+    geometry_msgs::msg::Point position;
+    try {
+      position = perception_msgs::object_access::getPosition(object_list.objects[object_index]);
+    } catch (const std::exception& ex) {
+      RCLCPP_WARN(this->get_logger(), "Could not read position of object %zu: %s", object_index, ex.what());
+      continue;
+    }
+
+    const lanelet::BasicPoint2d position_2d(position.x, position.y);
+    const auto candidate_lanelets =
+        lanelet::geometry::findWithin2d(map->laneletLayer, position_2d, lanelet_match_max_distance_m_);
+    auto& object_matches = matches_by_object[object_index];
+    object_matches.reserve(candidate_lanelets.size());
+
+    for (const auto& candidate_lanelet : candidate_lanelets) {
+      object_matches.push_back(LaneletMatch{candidate_lanelet.second, candidate_lanelet.first});
+    }
+
+    if (object_matches.empty()) {
+      RCLCPP_DEBUG(this->get_logger(), "Object %zu did not match any lanelet within %.2f m", object_index,
+                   lanelet_match_max_distance_m_);
+    } else {
+      RCLCPP_DEBUG(this->get_logger(), "Object %zu matched to %zu lanelet candidate(s)", object_index, object_matches.size());
+    }
+  }
+
+  return matches_by_object;
 }
 
 bool Lanelet2ObjectListPrediction::checkMap(bool handle_update) {

@@ -1,3 +1,4 @@
 /**/*:
   ros__parameters:
     ll2_map_server_name: /localization/lanelet2_map_server
+    lanelet_match_max_distance_m: 0.0

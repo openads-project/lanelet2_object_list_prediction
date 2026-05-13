@@ -1,9 +1,12 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
 #include <lanelet2_map_interface/lanelet2_map_interface.hpp>
 #include <perception_msgs/msg/object_list.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -25,6 +28,14 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   Lanelet2ObjectListPrediction();
 
  private:
+  /**
+   * @brief Lanelet match candidate for one perceived object
+   */
+  struct LaneletMatch {
+    lanelet::ConstLanelet lanelet;
+    double distance;
+  };
+
   /**
    * @brief Declares and loads a ROS parameter
    *
@@ -79,6 +90,14 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    */
   void objectListCallback(const perception_msgs::msg::ObjectList::ConstSharedPtr& msg);
 
+  /**
+   * @brief Match all objects in an object list to lanelets
+   *
+   * @param object_list object list in map frame
+   * @return lanelet match candidates per object
+   */
+  std::vector<std::vector<LaneletMatch>> matchObjectsToLanelets(const perception_msgs::msg::ObjectList& object_list) const;
+
  private:
   /**
    * @brief Auto-reconfigurable parameters for dynamic reconfiguration
@@ -101,6 +120,16 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   rclcpp::Publisher<perception_msgs::msg::ObjectList>::SharedPtr publisher_;
 
   /**
+   * @brief TF buffer for object-list transformations
+   */
+  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+
+  /**
+   * @brief TF listener for object-list transformations
+   */
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+
+  /**
    * @brief Lanelet2 map interface
    */
   std::unique_ptr<LL2MapInterface> ll2_interface_;
@@ -109,6 +138,11 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Name of lanelet2_map_server node (parameter)
    */
   std::string ll2_map_server_name_ = "lanelet2_map_server";
+
+  /**
+   * @brief Maximum object-to-lanelet matching distance in meters (parameter)
+   */
+  double lanelet_match_max_distance_m_ = 0.0;
 };
 
 }  // namespace lanelet2_object_list_prediction
