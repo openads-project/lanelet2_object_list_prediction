@@ -4,10 +4,9 @@
 #include <string>
 #include <vector>
 
-#include <geometry_msgs/msg/point_stamped.hpp>
-#include <rclcpp/rclcpp.hpp>
-
 #include <lanelet2_map_interface/lanelet2_map_interface.hpp>
+#include <perception_msgs/msg/object_list.hpp>
+#include <rclcpp/rclcpp.hpp>
 
 namespace lanelet2_object_list_prediction {
 
@@ -78,7 +77,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    *
    * @param msg message
    */
-  void topicCallback(const geometry_msgs::msg::PointStamped::ConstSharedPtr& msg);
+  void objectListCallback(const perception_msgs::msg::ObjectList::ConstSharedPtr& msg);
 
  private:
   /**
@@ -94,12 +93,12 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   /**
    * @brief Subscriber
    */
-  rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr subscriber_;
+  rclcpp::Subscription<perception_msgs::msg::ObjectList>::SharedPtr subscriber_;
 
   /**
    * @brief Publisher
    */
-  rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr publisher_;
+  rclcpp::Publisher<perception_msgs::msg::ObjectList>::SharedPtr publisher_;
 
   /**
    * @brief Lanelet2 map interface

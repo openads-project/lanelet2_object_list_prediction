@@ -8,6 +8,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(lanelet2_map_interface REQUIRED)
+find_package(perception_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 
 set(TARGET_NAME lanelet2_object_list_prediction)
@@ -23,6 +24,7 @@ target_compile_features(${TARGET_NAME} PUBLIC c_std_99 cxx_std_17)
 target_link_libraries(${TARGET_NAME} PUBLIC
   rclcpp::rclcpp
   ${geometry_msgs_TARGETS}
+  ${perception_msgs_TARGETS}
   lanelet2_map_interface::lanelet2_map_interface
 )
 

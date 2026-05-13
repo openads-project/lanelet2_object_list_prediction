@@ -111,20 +111,20 @@ void Lanelet2ObjectListPrediction::setup() {
       std::bind(&Lanelet2ObjectListPrediction::parametersCallback, this, std::placeholders::_1));
 
   // subscriber for handling incoming messages
-  subscriber_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
-      "~/input", 10, std::bind(&Lanelet2ObjectListPrediction::topicCallback, this, std::placeholders::_1));
+  subscriber_ = this->create_subscription<perception_msgs::msg::ObjectList>(
+      "~/object_list", 1, std::bind(&Lanelet2ObjectListPrediction::objectListCallback, this, std::placeholders::_1));
   RCLCPP_INFO(this->get_logger(), "Subscribed to '%s'", subscriber_->get_topic_name());
 
   // publisher for publishing outgoing messages
-  publisher_ = this->create_publisher<geometry_msgs::msg::PointStamped>("~/output", 10);
+  publisher_ = this->create_publisher<perception_msgs::msg::ObjectList>("~/predicted_object_list", 1);
   RCLCPP_INFO(this->get_logger(), "Publishing to '%s'", publisher_->get_topic_name());
 }
 
-void Lanelet2ObjectListPrediction::topicCallback(const geometry_msgs::msg::PointStamped::ConstSharedPtr& msg) {
+void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg::ObjectList::ConstSharedPtr& msg) {
   RCLCPP_INFO(this->get_logger(), "Message received with stamp: '%d'", msg->header.stamp.sec);
 
   // publish message
-  geometry_msgs::msg::PointStamped out_msg;
+  perception_msgs::msg::ObjectList out_msg;
   out_msg = *msg;
   publisher_->publish(out_msg);
   RCLCPP_INFO(this->get_logger(), "Message published with stamp: '%d'", out_msg.header.stamp.sec);
