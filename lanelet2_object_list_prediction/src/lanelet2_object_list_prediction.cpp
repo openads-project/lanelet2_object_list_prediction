@@ -2,29 +2,24 @@
 
 #include <lanelet2_object_list_prediction/lanelet2_object_list_prediction.hpp>
 
-
 namespace lanelet2_object_list_prediction {
 
-
 Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_object_list_prediction") {
-
   this->declareAndLoadParameter("param", param_, "TODO", true, false, false, 0.0, 10.0, 1.0);
   this->setup();
 }
 
-
 template <typename T>
 void Lanelet2ObjectListPrediction::declareAndLoadParameter(const std::string& name,
-                                                         T& param,
-                                                         const std::string& description,
-                                                         const bool add_to_auto_reconfigurable_params,
-                                                         const bool is_required,
-                                                         const bool read_only,
-                                                         const std::optional<double>& from_value,
-                                                         const std::optional<double>& to_value,
-                                                         const std::optional<double>& step_value,
-                                                         const std::string& additional_constraints) {
-
+                                                           T& param,
+                                                           const std::string& description,
+                                                           const bool add_to_auto_reconfigurable_params,
+                                                           const bool is_required,
+                                                           const bool read_only,
+                                                           const std::optional<double>& from_value,
+                                                           const std::optional<double>& to_value,
+                                                           const std::optional<double>& step_value,
+                                                           const std::string& additional_constraints) {
   rcl_interfaces::msg::ParameterDescriptor param_desc;
   param_desc.description = description;
   param_desc.additional_constraints = additional_constraints;
@@ -33,12 +28,12 @@ void Lanelet2ObjectListPrediction::declareAndLoadParameter(const std::string& na
   auto type = rclcpp::ParameterValue(param).get_type();
 
   if (from_value.has_value() && to_value.has_value()) {
-    if constexpr(std::is_integral_v<T>) {
+    if constexpr (std::is_integral_v<T>) {
       rcl_interfaces::msg::IntegerRange range;
       range.set__from_value(static_cast<T>(from_value.value())).set__to_value(static_cast<T>(to_value.value()));
       if (step_value.has_value()) range.set__step(static_cast<T>(step_value.value()));
       param_desc.integer_range = {range};
-    } else if constexpr(std::is_floating_point_v<T>) {
+    } else if constexpr (std::is_floating_point_v<T>) {
       rcl_interfaces::msg::FloatingPointRange range;
       range.set__from_value(static_cast<T>(from_value.value())).set__to_value(static_cast<T>(to_value.value()));
       if (step_value.has_value()) range.set__step(static_cast<T>(step_value.value()));
@@ -54,7 +49,7 @@ void Lanelet2ObjectListPrediction::declareAndLoadParameter(const std::string& na
     param = this->get_parameter(name).get_value<T>();
     std::stringstream ss;
     ss << "Loaded parameter '" << name << "': ";
-    if constexpr(is_vector_v<T>) {
+    if constexpr (is_vector_v<T>) {
       ss << "[";
       for (const auto& element : param) ss << element << (&element != &param.back() ? ", " : "");
       ss << "]";
@@ -69,7 +64,7 @@ void Lanelet2ObjectListPrediction::declareAndLoadParameter(const std::string& na
     } else {
       std::stringstream ss;
       ss << "Missing parameter '" << name << "', using default value: ";
-      if constexpr(is_vector_v<T>) {
+      if constexpr (is_vector_v<T>) {
         ss << "[";
         for (const auto& element : param) ss << element << (&element != &param.back() ? ", " : "");
         ss << "]";
@@ -82,21 +77,19 @@ void Lanelet2ObjectListPrediction::declareAndLoadParameter(const std::string& na
   }
 
   if (add_to_auto_reconfigurable_params) {
-    std::function<void(const rclcpp::Parameter&)> setter = [&param](const rclcpp::Parameter& p) {
-      param = p.get_value<T>();
-    };
+    std::function<void(const rclcpp::Parameter&)> setter = [&param](const rclcpp::Parameter& p) { param = p.get_value<T>(); };
     auto_reconfigurable_params_.push_back(std::make_tuple(name, setter));
   }
 }
 
-
-rcl_interfaces::msg::SetParametersResult Lanelet2ObjectListPrediction::parametersCallback(const std::vector<rclcpp::Parameter>& parameters) {
-
+rcl_interfaces::msg::SetParametersResult Lanelet2ObjectListPrediction::parametersCallback(
+    const std::vector<rclcpp::Parameter>& parameters) {
   for (const auto& param : parameters) {
     for (auto& auto_reconfigurable_param : auto_reconfigurable_params_) {
       if (param.get_name() == std::get<0>(auto_reconfigurable_param)) {
         std::get<1>(auto_reconfigurable_param)(param);
-        RCLCPP_INFO(this->get_logger(), "Reconfigured parameter '%s' to: %s", param.get_name().c_str(), param.value_to_string().c_str());
+        RCLCPP_INFO(this->get_logger(), "Reconfigured parameter '%s' to: %s", param.get_name().c_str(),
+                    param.value_to_string().c_str());
         break;
       }
     }
@@ -108,14 +101,14 @@ rcl_interfaces::msg::SetParametersResult Lanelet2ObjectListPrediction::parameter
   return result;
 }
 
-
 void Lanelet2ObjectListPrediction::setup() {
-
   // callback for dynamic parameter configuration
-  parameters_callback_ = this->add_on_set_parameters_callback(std::bind(&Lanelet2ObjectListPrediction::parametersCallback, this, std::placeholders::_1));
+  parameters_callback_ = this->add_on_set_parameters_callback(
+      std::bind(&Lanelet2ObjectListPrediction::parametersCallback, this, std::placeholders::_1));
 
   // subscriber for handling incoming messages
-  subscriber_ = this->create_subscription<geometry_msgs::msg::PointStamped>("~/input", 10, std::bind(&Lanelet2ObjectListPrediction::topicCallback, this, std::placeholders::_1));
+  subscriber_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
+      "~/input", 10, std::bind(&Lanelet2ObjectListPrediction::topicCallback, this, std::placeholders::_1));
   RCLCPP_INFO(this->get_logger(), "Subscribed to '%s'", subscriber_->get_topic_name());
 
   // publisher for publishing outgoing messages
@@ -123,9 +116,7 @@ void Lanelet2ObjectListPrediction::setup() {
   RCLCPP_INFO(this->get_logger(), "Publishing to '%s'", publisher_->get_topic_name());
 }
 
-
 void Lanelet2ObjectListPrediction::topicCallback(const geometry_msgs::msg::PointStamped::ConstSharedPtr& msg) {
-
   RCLCPP_INFO(this->get_logger(), "Message received with stamp: '%d'", msg->header.stamp.sec);
 
   // publish message
@@ -135,12 +126,9 @@ void Lanelet2ObjectListPrediction::topicCallback(const geometry_msgs::msg::Point
   RCLCPP_INFO(this->get_logger(), "Message published with stamp: '%d'", out_msg.header.stamp.sec);
 }
 
+}  // namespace lanelet2_object_list_prediction
 
-}
-
-
-int main(int argc, char *argv[]) {
-
+int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
   auto node = std::make_shared<lanelet2_object_list_prediction::Lanelet2ObjectListPrediction>();
   rclcpp::executors::SingleThreadedExecutor executor;

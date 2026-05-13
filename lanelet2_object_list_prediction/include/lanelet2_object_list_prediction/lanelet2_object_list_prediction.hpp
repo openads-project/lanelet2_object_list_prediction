@@ -7,25 +7,23 @@
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <rclcpp/rclcpp.hpp>
 
-
 namespace lanelet2_object_list_prediction {
 
-template <typename C> struct is_vector : std::false_type {};
-template <typename T,typename A> struct is_vector< std::vector<T,A> > : std::true_type {};
-template <typename C> inline constexpr bool is_vector_v = is_vector<C>::value;
-
+template <typename C>
+struct is_vector : std::false_type {};
+template <typename T, typename A>
+struct is_vector<std::vector<T, A>> : std::true_type {};
+template <typename C>
+inline constexpr bool is_vector_v = is_vector<C>::value;
 
 /**
  * @brief Lanelet2ObjectListPrediction class
  */
 class Lanelet2ObjectListPrediction : public rclcpp::Node {
-
  public:
-
   Lanelet2ObjectListPrediction();
 
  private:
-
   /**
    * @brief Declares and loads a ROS parameter
    *
@@ -41,16 +39,16 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @param additional_constraints additional constraints description
    */
   template <typename T>
-  void declareAndLoadParameter(const std::string &name,
-                               T &param,
-                               const std::string &description,
+  void declareAndLoadParameter(const std::string& name,
+                               T& param,
+                               const std::string& description,
                                const bool add_to_auto_reconfigurable_params = true,
                                const bool is_required = false,
                                const bool read_only = false,
-                               const std::optional<double> &from_value = std::nullopt,
-                               const std::optional<double> &to_value = std::nullopt,
-                               const std::optional<double> &step_value = std::nullopt,
-                               const std::string &additional_constraints = "");
+                               const std::optional<double>& from_value = std::nullopt,
+                               const std::optional<double>& to_value = std::nullopt,
+                               const std::optional<double>& step_value = std::nullopt,
+                               const std::string& additional_constraints = "");
 
   /**
    * @brief Handles reconfiguration when a parameter value is changed
@@ -73,11 +71,10 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   void topicCallback(const geometry_msgs::msg::PointStamped::ConstSharedPtr& msg);
 
  private:
-
   /**
    * @brief Auto-reconfigurable parameters for dynamic reconfiguration
    */
-  std::vector<std::tuple<std::string, std::function<void(const rclcpp::Parameter &)>>> auto_reconfigurable_params_;
+  std::vector<std::tuple<std::string, std::function<void(const rclcpp::Parameter&)>>> auto_reconfigurable_params_;
 
   /**
    * @brief Callback handle for dynamic parameter reconfiguration
@@ -100,5 +97,4 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   double param_ = 1.0;
 };
 
-
-}
+}  // namespace lanelet2_object_list_prediction
