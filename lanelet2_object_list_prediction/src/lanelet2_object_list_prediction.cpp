@@ -171,14 +171,14 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
     object_list_map_frame = *msg;
   }
 
-  std::vector<PredictionObject> prediction_objects = matchObjectsToMap(object_list_map_frame);
+  std::vector<PredictionObject> prediction_objects = matchObjectListToMap(object_list_map_frame);
   std::size_t matched_object_count = 0;
   for (PredictionObject& prediction_object : prediction_objects) {
     if (!prediction_object.lanelet_matches.empty()) {
       ++matched_object_count;
     }
     prediction_object.object.state_predictions =
-        createPredictionsForObject(prediction_object, object_list_map_frame.header.stamp);
+        createPredictionsForMatchedObject(prediction_object, object_list_map_frame.header.stamp);
   }
   RCLCPP_DEBUG(this->get_logger(), "Matched %zu/%zu objects to at least one lanelet", matched_object_count,
                object_list_map_frame.objects.size());
@@ -194,7 +194,7 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
   RCLCPP_INFO(this->get_logger(), "Message published with stamp: '%d'", out_msg.header.stamp.sec);
 }
 
-std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPrediction::matchObjectsToMap(
+std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPrediction::matchObjectListToMap(
     const perception_msgs::msg::ObjectList& object_list) const {
   std::vector<PredictionObject> prediction_objects;
   prediction_objects.reserve(object_list.objects.size());
@@ -232,11 +232,11 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       start_arc_length = std::clamp(start_arc_length, 0.0, lanelet_length);
       double orientation_difference = 0.0;
 
-      const double lanelet_yaw = laneletYawAt(lanelet, start_arc_length);
+      const double lanelet_yaw = computeLaneletYawAtArcLength(lanelet, start_arc_length);
       const double inverted_arc_length = lanelet_length - start_arc_length;
-      const double inverted_yaw = laneletYawAt(lanelet.invert(), inverted_arc_length);
-      const double lanelet_difference = std::abs(normalizeAngle(object_yaw - lanelet_yaw));
-      const double inverted_difference = std::abs(normalizeAngle(object_yaw - inverted_yaw));
+      const double inverted_yaw = computeLaneletYawAtArcLength(lanelet.invert(), inverted_arc_length);
+      const double lanelet_difference = std::abs(wrap_angle_rad(object_yaw - lanelet_yaw));
+      const double inverted_difference = std::abs(wrap_angle_rad(object_yaw - inverted_yaw));
 
       if (inverted_difference < lanelet_difference) {
         matched_lanelet = lanelet.invert();
@@ -267,7 +267,7 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
   return prediction_objects;
 }
 
-void Lanelet2ObjectListPrediction::updateRoutingGraph() {
+void Lanelet2ObjectListPrediction::rebuildRoutingGraphFromMap() {
   routing_graph_.reset();
   routing_graph_map_ = ll2_interface_->getMapPtr();
   if (routing_graph_map_ == nullptr) {
@@ -282,18 +282,18 @@ void Lanelet2ObjectListPrediction::updateRoutingGraph() {
   RCLCPP_INFO(this->get_logger(), "Built lanelet2 routing graph");
 }
 
-std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPrediction::createPredictionsForObject(
+std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPrediction::createPredictionsForMatchedObject(
     const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const {
   std::vector<perception_msgs::msg::ObjectStatePrediction> predictions;
   if (!prediction_object.lanelet_matches.empty()) {
-    predictions = createLaneletPredictions(prediction_object, base_time);
+    predictions = createMapBasedPredictions(prediction_object, base_time);
   }
 
   if (predictions.empty()) {
     if (unmatched_object_prediction_mode_ == "static") {
-      predictions.push_back(createStaticPrediction(prediction_object.object, base_time));
+      predictions.push_back(createStationaryPrediction(prediction_object.object, base_time));
     } else {
-      predictions.push_back(createKinematicPrediction(prediction_object.object, base_time));
+      predictions.push_back(createConstantVelocityPrediction(prediction_object.object, base_time));
     }
   }
 
@@ -304,7 +304,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
   return predictions;
 }
 
-std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPrediction::createLaneletPredictions(
+std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPrediction::createMapBasedPredictions(
     const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const {
   std::vector<perception_msgs::msg::ObjectStatePrediction> predictions;
   if (routing_graph_ == nullptr) {
@@ -321,7 +321,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
     return predictions;
   }
 
-  const std::size_t sample_count = predictionSampleCount();
+  const std::size_t sample_count = getPredictionSampleCount();
   const double max_travel_distance = speed * prediction_sample_interval_s_ * static_cast<double>(sample_count);
 
   for (const LaneletMatch& match : prediction_object.lanelet_matches) {
@@ -346,8 +346,8 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
       prediction.states.reserve(sample_count);
       for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
         const double travel_distance = speed * prediction_sample_interval_s_ * static_cast<double>(sample_index + 1);
-        prediction.states.push_back(sampleStateOnRoute(prediction_object.object.state, lanelet_route, match.start_arc_length,
-                                                       travel_distance, base_time, sample_index));
+        prediction.states.push_back(sampleStateOnLaneletRoute(prediction_object.object.state, lanelet_route,
+                                                              match.start_arc_length, travel_distance, base_time, sample_index));
       }
       predictions.push_back(prediction);
     }
@@ -356,10 +356,10 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
   return predictions;
 }
 
-perception_msgs::msg::ObjectStatePrediction Lanelet2ObjectListPrediction::createStaticPrediction(
+perception_msgs::msg::ObjectStatePrediction Lanelet2ObjectListPrediction::createStationaryPrediction(
     const perception_msgs::msg::Object& object, const builtin_interfaces::msg::Time& base_time) const {
   perception_msgs::msg::ObjectStatePrediction prediction;
-  const std::size_t sample_count = predictionSampleCount();
+  const std::size_t sample_count = getPredictionSampleCount();
   prediction.states.reserve(sample_count);
 
   geometry_msgs::msg::Point position = perception_msgs::object_access::getPosition(object);
@@ -371,16 +371,16 @@ perception_msgs::msg::ObjectStatePrediction Lanelet2ObjectListPrediction::create
 
   for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
     perception_msgs::msg::ObjectState state = object.state;
-    setPredictedState(state, position.x, position.y, position.z, yaw, velocity, base_time, sample_index);
+    setPredictedStateKinematics(state, position.x, position.y, position.z, yaw, velocity, base_time, sample_index);
     prediction.states.push_back(state);
   }
   return prediction;
 }
 
-perception_msgs::msg::ObjectStatePrediction Lanelet2ObjectListPrediction::createKinematicPrediction(
+perception_msgs::msg::ObjectStatePrediction Lanelet2ObjectListPrediction::createConstantVelocityPrediction(
     const perception_msgs::msg::Object& object, const builtin_interfaces::msg::Time& base_time) const {
   perception_msgs::msg::ObjectStatePrediction prediction;
-  const std::size_t sample_count = predictionSampleCount();
+  const std::size_t sample_count = getPredictionSampleCount();
   prediction.states.reserve(sample_count);
 
   geometry_msgs::msg::Point position;
@@ -392,20 +392,20 @@ perception_msgs::msg::ObjectStatePrediction Lanelet2ObjectListPrediction::create
     yaw = perception_msgs::object_access::getYaw(object);
   } catch (const std::exception& ex) {
     RCLCPP_WARN(this->get_logger(), "Could not read velocity for kinematic prediction, using static fallback: %s", ex.what());
-    return createStaticPrediction(object, base_time);
+    return createStationaryPrediction(object, base_time);
   }
 
   for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
     const double time_offset = prediction_sample_interval_s_ * static_cast<double>(sample_index + 1);
     perception_msgs::msg::ObjectState state = object.state;
-    setPredictedState(state, position.x + velocity.x * time_offset, position.y + velocity.y * time_offset,
-                      position.z + velocity.z * time_offset, yaw, velocity, base_time, sample_index);
+    setPredictedStateKinematics(state, position.x + velocity.x * time_offset, position.y + velocity.y * time_offset,
+                                position.z + velocity.z * time_offset, yaw, velocity, base_time, sample_index);
     prediction.states.push_back(state);
   }
   return prediction;
 }
 
-perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnRoute(
+perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLaneletRoute(
     const perception_msgs::msg::ObjectState& base_state,
     const lanelet::routing::LaneletPath& route,
     double start_arc_length,
@@ -459,7 +459,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnRou
     velocity.x = speed * std::cos(yaw);
     velocity.y = speed * std::sin(yaw);
     velocity.z = 0.0;
-    setPredictedState(state, point.x(), point.y(), fallback_position.z, yaw, velocity, base_time, sample_index);
+    setPredictedStateKinematics(state, point.x(), point.y(), fallback_position.z, yaw, velocity, base_time, sample_index);
     return state;
   }
 
@@ -470,22 +470,22 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnRou
   velocity.x = 0.0;
   velocity.y = 0.0;
   velocity.z = 0.0;
-  setPredictedState(state, point.x(), point.y(), fallback_position.z, 0.0, velocity, base_time, sample_index);
+  setPredictedStateKinematics(state, point.x(), point.y(), fallback_position.z, 0.0, velocity, base_time, sample_index);
   return state;
 }
 
-std::size_t Lanelet2ObjectListPrediction::predictionSampleCount() const {
+std::size_t Lanelet2ObjectListPrediction::getPredictionSampleCount() const {
   return std::max<std::size_t>(1, static_cast<std::size_t>(std::floor(prediction_horizon_s_ / prediction_sample_interval_s_)));
 }
 
-void Lanelet2ObjectListPrediction::setPredictedState(perception_msgs::msg::ObjectState& state,
-                                                     double x,
-                                                     double y,
-                                                     double z,
-                                                     double yaw,
-                                                     const geometry_msgs::msg::Vector3& velocity,
-                                                     const builtin_interfaces::msg::Time& base_time,
-                                                     std::size_t sample_index) const {
+void Lanelet2ObjectListPrediction::setPredictedStateKinematics(perception_msgs::msg::ObjectState& state,
+                                                               double x,
+                                                               double y,
+                                                               double z,
+                                                               double yaw,
+                                                               const geometry_msgs::msg::Vector3& velocity,
+                                                               const builtin_interfaces::msg::Time& base_time,
+                                                               std::size_t sample_index) const {
   state.header.frame_id = ll2_interface_->map_frame_id_;
   const rclcpp::Time stamp(base_time);
   const double time_offset = prediction_sample_interval_s_ * static_cast<double>(sample_index + 1);
@@ -508,7 +508,7 @@ void Lanelet2ObjectListPrediction::setPredictedState(perception_msgs::msg::Objec
   }
 }
 
-double Lanelet2ObjectListPrediction::laneletYawAt(const lanelet::ConstLanelet& lanelet, double arc_length) const {
+double Lanelet2ObjectListPrediction::computeLaneletYawAtArcLength(const lanelet::ConstLanelet& lanelet, double arc_length) const {
   const lanelet::ConstLineString2d centerline = lanelet.centerline2d();
   const double lanelet_length = lanelet::geometry::length(centerline);
   const double sample_distance = std::min(0.5, std::max(0.01, lanelet_length * 0.1));
@@ -519,15 +519,11 @@ double Lanelet2ObjectListPrediction::laneletYawAt(const lanelet::ConstLanelet& l
   return std::atan2(after_point.y() - before_point.y(), after_point.x() - before_point.x());
 }
 
-double Lanelet2ObjectListPrediction::normalizeAngle(double angle) const {
-  constexpr double pi = 3.14159265358979323846;
-  while (angle > pi) {
-    angle -= 2.0 * pi;
-  }
-  while (angle < -pi) {
-    angle += 2.0 * pi;
-  }
-  return angle;
+double Lanelet2ObjectListPrediction::wrap_angle_rad(double angle_rad, double min_val, double max_val) const {
+  double capped_angle_rad = angle_rad;
+  while (capped_angle_rad > max_val) capped_angle_rad -= 2 * M_PI;
+  while (capped_angle_rad < min_val) capped_angle_rad += 2 * M_PI;
+  return capped_angle_rad;
 }
 
 bool Lanelet2ObjectListPrediction::checkMap(bool handle_update) {
@@ -538,7 +534,7 @@ bool Lanelet2ObjectListPrediction::checkMap(bool handle_update) {
     map_status = map_status && !ll2_interface_->update_pending_;
   }
   if (map_status && handle_update && routing_graph_map_ != ll2_interface_->getMapPtr()) {
-    updateRoutingGraph();
+    rebuildRoutingGraphFromMap();
   }
   return map_status;
 }

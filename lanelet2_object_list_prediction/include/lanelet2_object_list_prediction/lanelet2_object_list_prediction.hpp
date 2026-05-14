@@ -34,18 +34,18 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Lanelet match candidate for one perceived object
    */
   struct LaneletMatch {
-    lanelet::ConstLanelet lanelet;
-    double distance;
-    double start_arc_length;
-    double orientation_difference;
+    lanelet::ConstLanelet lanelet;  ///< Matched lanelet in the direction used for routing
+    double distance;                ///< Lateral distance from object position to lanelet geometry in meters
+    double start_arc_length;        ///< Arc length of the projected object position along the matched centerline
+    double orientation_difference;  ///< Absolute yaw difference between object heading and lanelet direction in radians
   };
 
   /**
    * @brief Internal object representation used while predicting
    */
   struct PredictionObject {
-    perception_msgs::msg::Object object;
-    std::vector<LaneletMatch> lanelet_matches;
+    perception_msgs::msg::Object object;        ///< Object in map frame, later enriched with state predictions
+    std::vector<LaneletMatch> lanelet_matches;  ///< Lanelet candidates accepted for map-based prediction
   };
 
   /**
@@ -103,59 +103,122 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   void objectListCallback(const perception_msgs::msg::ObjectList::ConstSharedPtr& msg);
 
   /**
-   * @brief Match all objects in an object list to lanelets
+   * @brief Match all objects in an object list to lanelets in the current map
    *
    * @param object_list object list in map frame
-   * @return lanelet match candidates per object
+   * @return internal prediction objects containing the original objects and their map matches
    */
-  std::vector<PredictionObject> matchObjectsToMap(const perception_msgs::msg::ObjectList& object_list) const;
+  std::vector<PredictionObject> matchObjectListToMap(const perception_msgs::msg::ObjectList& object_list) const;
 
   /**
    * @brief Rebuilds the lanelet2 routing graph from the current map
    */
-  void updateRoutingGraph();
+  void rebuildRoutingGraphFromMap();
 
   /**
-   * @brief Creates predictions for one object
+   * @brief Dispatches prediction creation for one object
+   *
+   * @param prediction_object object and lanelet matches in map frame
+   * @param base_time time stamp of the first received state
+   * @return map-based predictions or the configured fallback prediction
+   */
+  std::vector<perception_msgs::msg::ObjectStatePrediction> createPredictionsForMatchedObject(
+      const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+
+  /**
+   * @brief Creates route alternatives for an object matched to lanelets
+   *
+   * @param prediction_object object and lanelet matches in map frame
+   * @param base_time time stamp of the input object list
+   * @return one prediction per possible lanelet route
+   */
+  std::vector<perception_msgs::msg::ObjectStatePrediction> createMapBasedPredictions(
+      const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+
+  /**
+   * @brief Creates a stationary fallback prediction
    *
    * @param object object in map frame
-   * @param matches lanelet matches of the object
-   * @param base_time time stamp of the first received state
-   * @return object state predictions
+   * @param base_time time stamp of the input object list
+   * @return one prediction with repeated object position and zero velocity
    */
-  std::vector<perception_msgs::msg::ObjectStatePrediction> createPredictionsForObject(
-      const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+  perception_msgs::msg::ObjectStatePrediction createStationaryPrediction(const perception_msgs::msg::Object& object,
+                                                                         const builtin_interfaces::msg::Time& base_time) const;
 
-  std::vector<perception_msgs::msg::ObjectStatePrediction> createLaneletPredictions(
-      const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+  /**
+   * @brief Creates a constant-velocity fallback prediction
+   *
+   * @param object object in map frame
+   * @param base_time time stamp of the input object list
+   * @return one prediction sampled by integrating the object's current velocity
+   */
+  perception_msgs::msg::ObjectStatePrediction createConstantVelocityPrediction(
+      const perception_msgs::msg::Object& object, const builtin_interfaces::msg::Time& base_time) const;
 
-  perception_msgs::msg::ObjectStatePrediction createStaticPrediction(const perception_msgs::msg::Object& object,
-                                                                     const builtin_interfaces::msg::Time& base_time) const;
+  /**
+   * @brief Samples one predicted state along a lanelet route
+   *
+   * @param base_state current object state used as template
+   * @param route lanelet route to sample
+   * @param start_arc_length current object position along the first route lanelet
+   * @param travel_distance distance to travel along the route from the current position
+   * @param base_time time stamp of the input object list
+   * @param sample_index zero-based prediction sample index
+   * @return predicted object state at the requested sample
+   */
+  perception_msgs::msg::ObjectState sampleStateOnLaneletRoute(const perception_msgs::msg::ObjectState& base_state,
+                                                              const lanelet::routing::LaneletPath& route,
+                                                              double start_arc_length,
+                                                              double travel_distance,
+                                                              const builtin_interfaces::msg::Time& base_time,
+                                                              std::size_t sample_index) const;
 
-  perception_msgs::msg::ObjectStatePrediction createKinematicPrediction(const perception_msgs::msg::Object& object,
-                                                                        const builtin_interfaces::msg::Time& base_time) const;
+  /**
+   * @brief Computes the number of predicted states per prediction
+   *
+   * @return fixed sample count derived from horizon and sample interval
+   */
+  std::size_t getPredictionSampleCount() const;
 
-  perception_msgs::msg::ObjectState sampleStateOnRoute(const perception_msgs::msg::ObjectState& base_state,
-                                                       const lanelet::routing::LaneletPath& route,
-                                                       double start_arc_length,
-                                                       double travel_distance,
-                                                       const builtin_interfaces::msg::Time& base_time,
-                                                       std::size_t sample_index) const;
+  /**
+   * @brief Writes pose, velocity and timestamp into a predicted state
+   *
+   * @param state state message to update
+   * @param x x position in map frame
+   * @param y y position in map frame
+   * @param z z position in map frame
+   * @param yaw yaw angle in map frame
+   * @param velocity velocity vector in map frame
+   * @param base_time time stamp of the input object list
+   * @param sample_index zero-based prediction sample index
+   */
+  void setPredictedStateKinematics(perception_msgs::msg::ObjectState& state,
+                                   double x,
+                                   double y,
+                                   double z,
+                                   double yaw,
+                                   const geometry_msgs::msg::Vector3& velocity,
+                                   const builtin_interfaces::msg::Time& base_time,
+                                   std::size_t sample_index) const;
 
-  std::size_t predictionSampleCount() const;
+  /**
+   * @brief Computes the centerline heading of a lanelet at an arc length
+   *
+   * @param lanelet lanelet whose centerline is sampled
+   * @param arc_length position along the centerline in meters
+   * @return yaw angle of the local centerline tangent in radians
+   */
+  double computeLaneletYawAtArcLength(const lanelet::ConstLanelet& lanelet, double arc_length) const;
 
-  void setPredictedState(perception_msgs::msg::ObjectState& state,
-                         double x,
-                         double y,
-                         double z,
-                         double yaw,
-                         const geometry_msgs::msg::Vector3& velocity,
-                         const builtin_interfaces::msg::Time& base_time,
-                         std::size_t sample_index) const;
-
-  double laneletYawAt(const lanelet::ConstLanelet& lanelet, double arc_length) const;
-
-  double normalizeAngle(double angle) const;
+  /**
+   * @brief Wraps an angle into a configurable interval
+   *
+   * @param angle_rad input angle in radians
+   * @param min_val lower interval bound in radians
+   * @param max_val upper interval bound in radians
+   * @return wrapped angle in radians
+   */
+  double wrap_angle_rad(double angle_rad, double min_val = -M_PI, double max_val = M_PI) const;
 
  private:
   /**
