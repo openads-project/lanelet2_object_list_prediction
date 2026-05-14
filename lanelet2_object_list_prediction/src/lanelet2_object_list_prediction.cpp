@@ -171,7 +171,7 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
     object_list_map_frame = *msg;
   }
 
-  std::vector<PredictionObject> prediction_objects = createPredictionObjects(object_list_map_frame);
+  std::vector<PredictionObject> prediction_objects = matchObjectsToMap(object_list_map_frame);
   std::size_t matched_object_count = 0;
   for (PredictionObject& prediction_object : prediction_objects) {
     if (!prediction_object.lanelet_matches.empty()) {
@@ -183,12 +183,18 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
   RCLCPP_DEBUG(this->get_logger(), "Matched %zu/%zu objects to at least one lanelet", matched_object_count,
                object_list_map_frame.objects.size());
 
-  perception_msgs::msg::ObjectList out_msg = createObjectListMessage(object_list_map_frame, prediction_objects);
+  perception_msgs::msg::ObjectList out_msg = object_list_map_frame;
+  out_msg.objects.clear();
+  out_msg.objects.reserve(prediction_objects.size());
+  for (const PredictionObject& prediction_object : prediction_objects) {
+    out_msg.objects.push_back(prediction_object.object);
+  }
+
   publisher_->publish(out_msg);
   RCLCPP_INFO(this->get_logger(), "Message published with stamp: '%d'", out_msg.header.stamp.sec);
 }
 
-std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPrediction::createPredictionObjects(
+std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPrediction::matchObjectsToMap(
     const perception_msgs::msg::ObjectList& object_list) const {
   std::vector<PredictionObject> prediction_objects;
   prediction_objects.reserve(object_list.objects.size());
@@ -205,15 +211,11 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
 
     geometry_msgs::msg::Point position;
     double object_yaw = 0.0;
-    bool use_orientation = false;
     try {
       position = perception_msgs::object_access::getPosition(prediction_object.object);
-      if (perception_msgs::object_access::hasYaw(prediction_object.object.state.model_id)) {
-        object_yaw = perception_msgs::object_access::getYaw(prediction_object.object);
-        use_orientation = true;
-      }
+      object_yaw = perception_msgs::object_access::getYaw(prediction_object.object);
     } catch (const std::exception& ex) {
-      RCLCPP_WARN(this->get_logger(), "Could not read position of object %zu: %s", object_index, ex.what());
+      RCLCPP_WARN(this->get_logger(), "Could not read position or yaw of object %zu: %s", object_index, ex.what());
       prediction_objects.push_back(prediction_object);
       continue;
     }
@@ -230,24 +232,22 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       start_arc_length = std::clamp(start_arc_length, 0.0, lanelet_length);
       double orientation_difference = 0.0;
 
-      if (use_orientation) {
-        const double lanelet_yaw = laneletYawAt(lanelet, start_arc_length);
-        const double inverted_arc_length = lanelet_length - start_arc_length;
-        const double inverted_yaw = laneletYawAt(lanelet.invert(), inverted_arc_length);
-        const double lanelet_difference = std::abs(normalizeAngle(object_yaw - lanelet_yaw));
-        const double inverted_difference = std::abs(normalizeAngle(object_yaw - inverted_yaw));
+      const double lanelet_yaw = laneletYawAt(lanelet, start_arc_length);
+      const double inverted_arc_length = lanelet_length - start_arc_length;
+      const double inverted_yaw = laneletYawAt(lanelet.invert(), inverted_arc_length);
+      const double lanelet_difference = std::abs(normalizeAngle(object_yaw - lanelet_yaw));
+      const double inverted_difference = std::abs(normalizeAngle(object_yaw - inverted_yaw));
 
-        if (inverted_difference < lanelet_difference) {
-          matched_lanelet = lanelet.invert();
-          start_arc_length = inverted_arc_length;
-          orientation_difference = inverted_difference;
-        } else {
-          orientation_difference = lanelet_difference;
-        }
+      if (inverted_difference < lanelet_difference) {
+        matched_lanelet = lanelet.invert();
+        start_arc_length = inverted_arc_length;
+        orientation_difference = inverted_difference;
+      } else {
+        orientation_difference = lanelet_difference;
+      }
 
-        if (orientation_difference > lanelet_match_max_yaw_diff_rad_) {
-          continue;
-        }
+      if (orientation_difference > lanelet_match_max_yaw_diff_rad_) {
+        continue;
       }
 
       prediction_object.lanelet_matches.push_back(
@@ -271,6 +271,7 @@ void Lanelet2ObjectListPrediction::updateRoutingGraph() {
   routing_graph_.reset();
   routing_graph_map_ = ll2_interface_->getMapPtr();
   if (routing_graph_map_ == nullptr) {
+    RCLCPP_WARN(this->get_logger(), "Lanelet2 map pointer is null, cannot build routing graph");
     return;
   }
 
@@ -279,17 +280,6 @@ void Lanelet2ObjectListPrediction::updateRoutingGraph() {
   routing_graph_ = lanelet::routing::RoutingGraph::build(*routing_graph_map_, *traffic_rules);
 
   RCLCPP_INFO(this->get_logger(), "Built lanelet2 routing graph");
-}
-
-perception_msgs::msg::ObjectList Lanelet2ObjectListPrediction::createObjectListMessage(
-    const perception_msgs::msg::ObjectList& base_object_list, const std::vector<PredictionObject>& prediction_objects) const {
-  perception_msgs::msg::ObjectList object_list = base_object_list;
-  object_list.objects.clear();
-  object_list.objects.reserve(prediction_objects.size());
-  for (const PredictionObject& prediction_object : prediction_objects) {
-    object_list.objects.push_back(prediction_object.object);
-  }
-  return object_list;
 }
 
 std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPrediction::createPredictionsForObject(
@@ -318,6 +308,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
     const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const {
   std::vector<perception_msgs::msg::ObjectStatePrediction> predictions;
   if (routing_graph_ == nullptr) {
+    RCLCPP_WARN(this->get_logger(), "Routing graph is not available, cannot create lanelet predictions");
     return predictions;
   }
 
@@ -345,7 +336,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
       try {
         routes = routing_graph_->possiblePaths(match.lanelet, params);
       } catch (const std::exception& ex) {
-        RCLCPP_DEBUG(this->get_logger(), "Could not create lanelet routes from matched lanelet: %s", ex.what());
+        RCLCPP_WARN(this->get_logger(), "Could not create lanelet routes from matched lanelet: %s", ex.what());
         continue;
       }
     }
@@ -372,14 +363,15 @@ perception_msgs::msg::ObjectStatePrediction Lanelet2ObjectListPrediction::create
   prediction.states.reserve(sample_count);
 
   geometry_msgs::msg::Point position = perception_msgs::object_access::getPosition(object);
-  double yaw = 0.0;
-  if (perception_msgs::object_access::hasYaw(object.state.model_id)) {
-    yaw = perception_msgs::object_access::getYaw(object);
-  }
+  const double yaw = perception_msgs::object_access::getYaw(object);
+  geometry_msgs::msg::Vector3 velocity;
+  velocity.x = 0.0;
+  velocity.y = 0.0;
+  velocity.z = 0.0;
 
   for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
     perception_msgs::msg::ObjectState state = object.state;
-    setPredictedState(state, position.x, position.y, position.z, yaw, 0.0, base_time, sample_index);
+    setPredictedState(state, position.x, position.y, position.z, yaw, velocity, base_time, sample_index);
     prediction.states.push_back(state);
   }
   return prediction;
@@ -397,9 +389,7 @@ perception_msgs::msg::ObjectStatePrediction Lanelet2ObjectListPrediction::create
   try {
     position = perception_msgs::object_access::getPosition(object);
     velocity = perception_msgs::object_access::getVelocityXYZ(object);
-    if (perception_msgs::object_access::hasYaw(object.state.model_id)) {
-      yaw = perception_msgs::object_access::getYaw(object);
-    }
+    yaw = perception_msgs::object_access::getYaw(object);
   } catch (const std::exception& ex) {
     RCLCPP_WARN(this->get_logger(), "Could not read velocity for kinematic prediction, using static fallback: %s", ex.what());
     return createStaticPrediction(object, base_time);
@@ -409,8 +399,7 @@ perception_msgs::msg::ObjectStatePrediction Lanelet2ObjectListPrediction::create
     const double time_offset = prediction_sample_interval_s_ * static_cast<double>(sample_index + 1);
     perception_msgs::msg::ObjectState state = object.state;
     setPredictedState(state, position.x + velocity.x * time_offset, position.y + velocity.y * time_offset,
-                      position.z + velocity.z * time_offset, yaw, std::numeric_limits<double>::quiet_NaN(), base_time,
-                      sample_index);
+                      position.z + velocity.z * time_offset, yaw, velocity, base_time, sample_index);
     prediction.states.push_back(state);
   }
   return prediction;
@@ -425,6 +414,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnRou
     std::size_t sample_index) const {
   perception_msgs::msg::ObjectState state = base_state;
   if (route.empty()) {
+    RCLCPP_WARN(this->get_logger(), "Lanelet route is empty, cannot sample lanelet prediction");
     return state;
   }
 
@@ -465,14 +455,22 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnRou
     const lanelet::BasicPoint2d before_point = lanelet::geometry::interpolatedPointAtDistance(centerline, before_arc_length);
     const lanelet::BasicPoint2d after_point = lanelet::geometry::interpolatedPointAtDistance(centerline, after_arc_length);
     const double yaw = std::atan2(after_point.y() - before_point.y(), after_point.x() - before_point.x());
-    setPredictedState(state, point.x(), point.y(), fallback_position.z, yaw, speed, base_time, sample_index);
+    geometry_msgs::msg::Vector3 velocity;
+    velocity.x = speed * std::cos(yaw);
+    velocity.y = speed * std::sin(yaw);
+    velocity.z = 0.0;
+    setPredictedState(state, point.x(), point.y(), fallback_position.z, yaw, velocity, base_time, sample_index);
     return state;
   }
 
   const lanelet::ConstLineString2d last_centerline = route.back().centerline2d();
   const double last_length = lanelet::geometry::length(last_centerline);
   const lanelet::BasicPoint2d point = lanelet::geometry::interpolatedPointAtDistance(last_centerline, last_length);
-  setPredictedState(state, point.x(), point.y(), fallback_position.z, 0.0, 0.0, base_time, sample_index);
+  geometry_msgs::msg::Vector3 velocity;
+  velocity.x = 0.0;
+  velocity.y = 0.0;
+  velocity.z = 0.0;
+  setPredictedState(state, point.x(), point.y(), fallback_position.z, 0.0, velocity, base_time, sample_index);
   return state;
 }
 
@@ -485,7 +483,7 @@ void Lanelet2ObjectListPrediction::setPredictedState(perception_msgs::msg::Objec
                                                      double y,
                                                      double z,
                                                      double yaw,
-                                                     double speed,
+                                                     const geometry_msgs::msg::Vector3& velocity,
                                                      const builtin_interfaces::msg::Time& base_time,
                                                      std::size_t sample_index) const {
   state.header.frame_id = ll2_interface_->map_frame_id_;
@@ -502,19 +500,10 @@ void Lanelet2ObjectListPrediction::setPredictedState(perception_msgs::msg::Objec
   position.z = z;
   perception_msgs::object_access::setPosition(state, position, false);
 
-  if (std::isfinite(speed)) {
-    geometry_msgs::msg::Vector3 velocity;
-    velocity.x = speed * std::cos(yaw);
-    velocity.y = speed * std::sin(yaw);
-    velocity.z = 0.0;
-    try {
-      perception_msgs::object_access::setVelocityXYZYaw(state, velocity, yaw, false);
-    } catch (const std::exception&) {
-      if (perception_msgs::object_access::hasYaw(state.model_id)) {
-        perception_msgs::object_access::setYaw(state, yaw, false);
-      }
-    }
-  } else if (perception_msgs::object_access::hasYaw(state.model_id)) {
+  try {
+    perception_msgs::object_access::setVelocityXYZYaw(state, velocity, yaw, false);
+  } catch (const std::exception& ex) {
+    RCLCPP_DEBUG(this->get_logger(), "Could not set predicted velocity, setting yaw only: %s", ex.what());
     perception_msgs::object_access::setYaw(state, yaw, false);
   }
 }

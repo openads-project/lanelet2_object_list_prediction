@@ -108,15 +108,12 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @param object_list object list in map frame
    * @return lanelet match candidates per object
    */
-  std::vector<PredictionObject> createPredictionObjects(const perception_msgs::msg::ObjectList& object_list) const;
+  std::vector<PredictionObject> matchObjectsToMap(const perception_msgs::msg::ObjectList& object_list) const;
 
   /**
    * @brief Rebuilds the lanelet2 routing graph from the current map
    */
   void updateRoutingGraph();
-
-  perception_msgs::msg::ObjectList createObjectListMessage(const perception_msgs::msg::ObjectList& base_object_list,
-                                                           const std::vector<PredictionObject>& prediction_objects) const;
 
   /**
    * @brief Creates predictions for one object
@@ -152,7 +149,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
                          double y,
                          double z,
                          double yaw,
-                         double speed,
+                         const geometry_msgs::msg::Vector3& velocity,
                          const builtin_interfaces::msg::Time& base_time,
                          std::size_t sample_index) const;
 
