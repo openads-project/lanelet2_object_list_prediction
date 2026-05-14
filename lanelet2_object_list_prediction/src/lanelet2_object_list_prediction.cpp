@@ -137,7 +137,7 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
   RCLCPP_INFO(this->get_logger(), "Message received with stamp: '%d'", msg->header.stamp.sec);
 
   if (!checkMap(true)) {
-    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000, "Lanelet2 map is not loaded yet, skipping object list");
+    RCLCPP_WARN(this->get_logger(), "Lanelet2 map is not loaded yet, skipping object list");
     return;
   }
 
@@ -146,7 +146,7 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
     try {
       object_list_map_frame = tf_buffer_->transform(*msg, ll2_interface_->map_frame_id_, tf2::durationFromSec(0.1));
     } catch (tf2::TransformException& ex) {
-      RCLCPP_ERROR(this->get_logger(), "Could not transform object list from frame '%s' to frame '%s': %s",
+      RCLCPP_ERROR(this->get_logger(), "Could not transform object list from frame '%s' to frame '%s': %s. Skipping object list.",
                    msg->header.frame_id.c_str(), ll2_interface_->map_frame_id_.c_str(), ex.what());
       return;
     }
@@ -177,6 +177,7 @@ std::vector<std::vector<Lanelet2ObjectListPrediction::LaneletMatch>> Lanelet2Obj
 
   const auto map = ll2_interface_->getMapPtr();
   if (map == nullptr) {
+    RCLCPP_ERROR(this->get_logger(), "Lanelet2 map pointer is null, cannot match objects to lanelets");
     return matches_by_object;
   }
 
