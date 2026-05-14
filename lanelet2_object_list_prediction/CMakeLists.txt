@@ -9,6 +9,8 @@ find_package(ament_cmake REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(lanelet2_core REQUIRED)
 find_package(lanelet2_map_interface REQUIRED)
+find_package(lanelet2_routing REQUIRED)
+find_package(lanelet2_traffic_rules REQUIRED)
 find_package(perception_msgs REQUIRED)
 find_package(perception_msgs_utils REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -31,6 +33,8 @@ target_link_libraries(${TARGET_NAME} PUBLIC
   ${geometry_msgs_TARGETS}
   ${perception_msgs_TARGETS}
   ${lanelet2_core_LIBRARIES}
+  ${lanelet2_routing_LIBRARIES}
+  ${lanelet2_traffic_rules_LIBRARIES}
   lanelet2_map_interface::lanelet2_map_interface
   perception_msgs_utils::perception_msgs_utils
   tf2::tf2

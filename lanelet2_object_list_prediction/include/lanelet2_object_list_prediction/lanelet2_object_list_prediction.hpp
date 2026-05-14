@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include <lanelet2_routing/Forward.h>
+#include <lanelet2_routing/RoutingGraph.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <lanelet2_map_interface/lanelet2_map_interface.hpp>
@@ -34,6 +36,16 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   struct LaneletMatch {
     lanelet::ConstLanelet lanelet;
     double distance;
+    double start_arc_length;
+    double orientation_difference;
+  };
+
+  /**
+   * @brief Internal object representation used while predicting
+   */
+  struct PredictionObject {
+    perception_msgs::msg::Object object;
+    std::vector<LaneletMatch> lanelet_matches;
   };
 
   /**
@@ -96,7 +108,57 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @param object_list object list in map frame
    * @return lanelet match candidates per object
    */
-  std::vector<std::vector<LaneletMatch>> matchObjectsToLanelets(const perception_msgs::msg::ObjectList& object_list) const;
+  std::vector<PredictionObject> createPredictionObjects(const perception_msgs::msg::ObjectList& object_list) const;
+
+  /**
+   * @brief Rebuilds the lanelet2 routing graph from the current map
+   */
+  void updateRoutingGraph();
+
+  perception_msgs::msg::ObjectList createObjectListMessage(const perception_msgs::msg::ObjectList& base_object_list,
+                                                           const std::vector<PredictionObject>& prediction_objects) const;
+
+  /**
+   * @brief Creates predictions for one object
+   *
+   * @param object object in map frame
+   * @param matches lanelet matches of the object
+   * @param base_time time stamp of the first received state
+   * @return object state predictions
+   */
+  std::vector<perception_msgs::msg::ObjectStatePrediction> createPredictionsForObject(
+      const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+
+  std::vector<perception_msgs::msg::ObjectStatePrediction> createLaneletPredictions(
+      const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+
+  perception_msgs::msg::ObjectStatePrediction createStaticPrediction(const perception_msgs::msg::Object& object,
+                                                                     const builtin_interfaces::msg::Time& base_time) const;
+
+  perception_msgs::msg::ObjectStatePrediction createKinematicPrediction(const perception_msgs::msg::Object& object,
+                                                                        const builtin_interfaces::msg::Time& base_time) const;
+
+  perception_msgs::msg::ObjectState sampleStateOnRoute(const perception_msgs::msg::ObjectState& base_state,
+                                                       const lanelet::routing::LaneletPath& route,
+                                                       double start_arc_length,
+                                                       double travel_distance,
+                                                       const builtin_interfaces::msg::Time& base_time,
+                                                       std::size_t sample_index) const;
+
+  std::size_t predictionSampleCount() const;
+
+  void setPredictedState(perception_msgs::msg::ObjectState& state,
+                         double x,
+                         double y,
+                         double z,
+                         double yaw,
+                         double speed,
+                         const builtin_interfaces::msg::Time& base_time,
+                         std::size_t sample_index) const;
+
+  double laneletYawAt(const lanelet::ConstLanelet& lanelet, double arc_length) const;
+
+  double normalizeAngle(double angle) const;
 
  private:
   /**
@@ -143,6 +205,36 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Maximum object-to-lanelet matching distance in meters (parameter)
    */
   double lanelet_match_max_distance_m_ = 0.0;
+
+  /**
+   * @brief Maximum yaw difference for accepting a lanelet match in radians (parameter)
+   */
+  double lanelet_match_max_yaw_diff_rad_ = 1.57079632679;
+
+  /**
+   * @brief Prediction horizon in seconds (parameter)
+   */
+  double prediction_horizon_s_ = 5.0;
+
+  /**
+   * @brief Sampling interval of predicted states in seconds (parameter)
+   */
+  double prediction_sample_interval_s_ = 0.5;
+
+  /**
+   * @brief Prediction mode for unmatched objects: "static" or "kinematic" (parameter)
+   */
+  std::string unmatched_object_prediction_mode_ = "kinematic";
+
+  /**
+   * @brief Lanelet2 routing graph
+   */
+  lanelet::routing::RoutingGraphUPtr routing_graph_;
+
+  /**
+   * @brief Map pointer used when the routing graph was built
+   */
+  lanelet::LaneletMapConstPtr routing_graph_map_;
 };
 
 }  // namespace lanelet2_object_list_prediction

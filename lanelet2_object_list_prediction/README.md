@@ -18,8 +18,8 @@ TODO
 ```mermaid
 flowchart LR
     NODE("lanelet2_object_list_prediction")
-    S0:::hidden -->|~/input| NODE
-    NODE -->|~/output| P0:::hidden
+    S0:::hidden -->|~/object_list| NODE
+    NODE -->|~/predicted_object_list| P0:::hidden
     classDef hidden display: none;
 ```
 
@@ -27,19 +27,24 @@ flowchart LR
 
 | Topic | Type | Description |
 | --- | --- | --- |
-| `~/input` | `geometry_msgs/msg/PointStamped` | TODO |
+| `~/object_list` | `perception_msgs/msg/ObjectList` | TODO |
 
 #### Published Topics
 
 | Topic | Type | Description |
 | --- | --- | --- |
-| `~/output` | `geometry_msgs/msg/PointStamped` | TODO |
+| `~/predicted_object_list` | `perception_msgs/msg/ObjectList` | TODO |
 
 #### Parameters
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `param` | `float` | `1.0` | TODO |
+| `ll2_map_server_name` | `string` | `"lanelet2_map_server"` | Name of lanelet2_map_server node |
+| `lanelet_match_max_distance_m` | `float` | `0.0` | Maximum distance in meters for matching an object to a lanelet |
+| `lanelet_match_max_yaw_diff_rad` | `float` | `1.57079632679` | Maximum yaw difference in radians for accepting a lanelet match |
+| `prediction_horizon_s` | `float` | `5.0` | Prediction horizon in seconds |
+| `prediction_sample_interval_s` | `float` | `0.5` | Sampling interval of predicted states in seconds |
+| `unmatched_object_prediction_mode` | `string` | `"kinematic"` | Prediction mode for objects that are not matched to the map |
 
 ## Launch Files
 
@@ -47,8 +52,8 @@ flowchart LR
 
 | Argument | Default | Description |
 | --- | --- | --- |
-| `input_topic` | `"~/input"` | TODO |
-| `output_topic` | `"~/output"` | TODO |
+| `object_list_topic` | `"~/object_list"` | TODO |
+| `predicted_object_list_topic` | `"~/predicted_object_list"` | TODO |
 | `name` | `"lanelet2_object_list_prediction"` | TODO |
 | `namespace` | `""` | TODO |
 | `params` | `os.path.join(get_package_share_directory("lanelet2_object_list_prediction"), "config", "params.yml")` | TODO |
