@@ -201,25 +201,6 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
                                    const builtin_interfaces::msg::Time& base_time,
                                    std::size_t sample_index) const;
 
-  /**
-   * @brief Computes the centerline heading of a lanelet at an arc length
-   *
-   * @param lanelet lanelet whose centerline is sampled
-   * @param arc_length position along the centerline in meters
-   * @return yaw angle of the local centerline tangent in radians
-   */
-  double computeLaneletYawAtArcLength(const lanelet::ConstLanelet& lanelet, double arc_length) const;
-
-  /**
-   * @brief Wraps an angle into a configurable interval
-   *
-   * @param angle_rad input angle in radians
-   * @param min_val lower interval bound in radians
-   * @param max_val upper interval bound in radians
-   * @return wrapped angle in radians
-   */
-  double wrap_angle_rad(double angle_rad, double min_val = -M_PI, double max_val = M_PI) const;
-
  private:
   /**
    * @brief Auto-reconfigurable parameters for dynamic reconfiguration

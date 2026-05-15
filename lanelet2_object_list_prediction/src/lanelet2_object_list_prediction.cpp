@@ -12,6 +12,7 @@
 #include <lanelet2_traffic_rules/TrafficRulesFactory.h>
 #include <tf2/exceptions.h>
 #include <lanelet2_object_list_prediction/lanelet2_object_list_prediction.hpp>
+#include <lanelet2_object_list_prediction/utils.hpp>
 #include <perception_msgs_utils/object_access.hpp>
 #include <tf2/time.hpp>
 #include <tf2_perception_msgs/tf2_perception_msgs.hpp>
@@ -267,21 +268,6 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
   return prediction_objects;
 }
 
-void Lanelet2ObjectListPrediction::rebuildRoutingGraphFromMap() {
-  routing_graph_.reset();
-  routing_graph_map_ = ll2_interface_->getMapPtr();
-  if (routing_graph_map_ == nullptr) {
-    RCLCPP_WARN(this->get_logger(), "Lanelet2 map pointer is null, cannot build routing graph");
-    return;
-  }
-
-  lanelet::traffic_rules::TrafficRulesUPtr traffic_rules =
-      lanelet::traffic_rules::TrafficRulesFactory::create(lanelet::Locations::Germany, lanelet::Participants::Vehicle);
-  routing_graph_ = lanelet::routing::RoutingGraph::build(*routing_graph_map_, *traffic_rules);
-
-  RCLCPP_INFO(this->get_logger(), "Built lanelet2 routing graph");
-}
-
 std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPrediction::createPredictionsForMatchedObject(
     const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const {
   std::vector<perception_msgs::msg::ObjectStatePrediction> predictions;
@@ -508,22 +494,19 @@ void Lanelet2ObjectListPrediction::setPredictedStateKinematics(perception_msgs::
   }
 }
 
-double Lanelet2ObjectListPrediction::computeLaneletYawAtArcLength(const lanelet::ConstLanelet& lanelet, double arc_length) const {
-  const lanelet::ConstLineString2d centerline = lanelet.centerline2d();
-  const double lanelet_length = lanelet::geometry::length(centerline);
-  const double sample_distance = std::min(0.5, std::max(0.01, lanelet_length * 0.1));
-  const double before_arc_length = std::max(0.0, arc_length - sample_distance);
-  const double after_arc_length = std::min(lanelet_length, arc_length + sample_distance);
-  const lanelet::BasicPoint2d before_point = lanelet::geometry::interpolatedPointAtDistance(centerline, before_arc_length);
-  const lanelet::BasicPoint2d after_point = lanelet::geometry::interpolatedPointAtDistance(centerline, after_arc_length);
-  return std::atan2(after_point.y() - before_point.y(), after_point.x() - before_point.x());
-}
+void Lanelet2ObjectListPrediction::rebuildRoutingGraphFromMap() {
+  routing_graph_.reset();
+  routing_graph_map_ = ll2_interface_->getMapPtr();
+  if (routing_graph_map_ == nullptr) {
+    RCLCPP_WARN(this->get_logger(), "Lanelet2 map pointer is null, cannot build routing graph");
+    return;
+  }
 
-double Lanelet2ObjectListPrediction::wrap_angle_rad(double angle_rad, double min_val, double max_val) const {
-  double capped_angle_rad = angle_rad;
-  while (capped_angle_rad > max_val) capped_angle_rad -= 2 * M_PI;
-  while (capped_angle_rad < min_val) capped_angle_rad += 2 * M_PI;
-  return capped_angle_rad;
+  lanelet::traffic_rules::TrafficRulesUPtr traffic_rules =
+      lanelet::traffic_rules::TrafficRulesFactory::create(lanelet::Locations::Germany, lanelet::Participants::Vehicle);
+  routing_graph_ = lanelet::routing::RoutingGraph::build(*routing_graph_map_, *traffic_rules);
+
+  RCLCPP_INFO(this->get_logger(), "Built lanelet2 routing graph");
 }
 
 bool Lanelet2ObjectListPrediction::checkMap(bool handle_update) {
