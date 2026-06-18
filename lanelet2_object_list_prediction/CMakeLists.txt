@@ -42,6 +42,9 @@ target_link_libraries(${TARGET_NAME} PUBLIC
   tf2_ros::tf2_ros
 )
 
+# https://github.com/openads-project/lanelet2_map_server/tree/main/lanelet2_map_interface#linting-downstream-packages
+target_dependencies_as_system(${TARGET_NAME})
+
 install(TARGETS ${TARGET_NAME}
   DESTINATION lib/${PROJECT_NAME}
 )

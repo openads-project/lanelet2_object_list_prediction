@@ -235,7 +235,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   /**
    * @brief Lanelet2 map interface
    */
-  std::unique_ptr<LL2MapInterface> ll2_interface_;
+  std::unique_ptr<Lanelet2MapInterface> ll2_interface_;
 
   /**
    * @brief Name of lanelet2_map_server node (parameter)

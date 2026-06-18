@@ -135,7 +135,7 @@ void Lanelet2ObjectListPrediction::setup() {
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
   // map interface
-  ll2_interface_ = std::make_unique<LL2MapInterface>(*this, ll2_map_server_name_);
+  ll2_interface_ = std::make_unique<Lanelet2MapInterface>(*this, ll2_map_server_name_);
 
   // callback for dynamic parameter configuration
   parameters_callback_ = this->add_on_set_parameters_callback(
