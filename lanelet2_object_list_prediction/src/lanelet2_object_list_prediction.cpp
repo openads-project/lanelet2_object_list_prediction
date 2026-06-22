@@ -527,6 +527,13 @@ bool Lanelet2ObjectListPrediction::checkMap(bool handle_update) {
 
 }  // namespace lanelet2_object_list_prediction
 
+/**
+ * @brief Initializes ROS, spins the prediction node, and shuts down on exit
+ *
+ * @param[in] argc number of command-line arguments
+ * @param[in] argv command-line arguments
+ * @return process exit code
+ */
 int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
   auto node = std::make_shared<lanelet2_object_list_prediction::Lanelet2ObjectListPrediction>();

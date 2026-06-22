@@ -3,7 +3,7 @@
 <package format="3">
 
   <name>lanelet2_object_list_prediction</name>
-  <version>0.0.0</version>
+  <version>1.0.0</version>
   <description>Predicts object movements via Lanelet2 map information</description>
 
   <maintainer email="jean-pierre.busch@ika.rwth-aachen.de">Jean-Pierre Busch</maintainer>
@@ -25,6 +25,11 @@
   <depend>tf2</depend>
   <depend>tf2_perception_msgs</depend>
   <depend>tf2_ros</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_cmake_clang_format</test_depend>
+  <test_depend>ament_cmake_clang_tidy</test_depend>
+  <test_depend>ament_cmake_flake8</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

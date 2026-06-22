@@ -30,6 +30,9 @@ inline constexpr bool is_vector_v = is_vector<C>::value;
  */
 class Lanelet2ObjectListPrediction : public rclcpp::Node {
  public:
+  /**
+   * @brief Constructs the node, declares parameters, and calls setup
+   */
   Lanelet2ObjectListPrediction();
 
  private:
