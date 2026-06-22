@@ -1,19 +1,12 @@
 # `lanelet2_object_list_prediction`
 
-TODO
-
-- [Container Images](#container-images)
-- [lanelet2_object_list_prediction](#lanelet2_object_list_prediction)
-
-### Container Images
-
-| Description | Image:Tag | Default Command |
-| --- | --- | -- |
-|  |  |  |
+Predicts object movements via Lanelet2 map information.
 
 ## Nodes
 
 ### `lanelet2_object_list_prediction`
+
+TODO: Detailed description of the module.
 
 ```mermaid
 flowchart LR

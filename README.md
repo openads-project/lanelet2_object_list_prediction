@@ -114,7 +114,7 @@ Development and maintenance of this repository are supported by the following pr
 
 | Project | Funding Institution | Grant Number |
 | --- | --- | --- |
-| [AIGGREGATE](https://aiggregate.eu/) | 🇪🇺 European Union | TODO |
+| [AIGGREGATE](https://aiggregate.eu/) | 🇪🇺 European Union | 101202457 |
 
 <p>
   <img src="https://www.drought.uni-freiburg.de/stressres/images/bmftr-logo/image" height=70>
