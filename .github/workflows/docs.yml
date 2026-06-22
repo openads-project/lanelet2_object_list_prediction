@@ -8,5 +8,6 @@ on:
 
 jobs:
   docs:
+    runs-on: self-hosted
     uses: openads-project/openads-dev-environment/.github/workflows/docs.yml@main
     secrets: inherit

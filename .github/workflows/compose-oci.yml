@@ -10,5 +10,6 @@ on:
 
 jobs:
   compose-oci:
+    runs-on: self-hosted
     uses: openads-project/openads-dev-environment/.github/workflows/compose-oci.yml@main
     secrets: inherit

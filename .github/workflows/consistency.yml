@@ -8,5 +8,6 @@ on:
 
 jobs:
   consistency:
+    runs-on: self-hosted
     uses: openads-project/openads-dev-environment/.github/workflows/consistency.yml@main
     secrets: inherit
