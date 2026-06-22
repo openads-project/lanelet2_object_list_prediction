@@ -1,10 +1,18 @@
 # lanelet2_object_list_prediction
 
 <p align="center">
+  <a href="https://github.com/openads-project"><img src="https://img.shields.io/badge/OpenADS-f5ff01"/></a>
   <a href="https://www.ros.org"><img src="https://img.shields.io/badge/ROS 2-jazzy-22314e"/></a>
+  <a href="https://github.com/openads-project/lanelet2_object_list_prediction/releases/latest"><img src="https://img.shields.io/github/v/release/openads-project/lanelet2_object_list_prediction"/></a>
+  <a href="https://github.com/openads-project/lanelet2_object_list_prediction/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openads-project/lanelet2_object_list_prediction"/></a>
+  <a href="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/docker-ros.yml"><img src="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/docker-ros.yml/badge.svg"/></a>
+  <a href="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/compose-oci.yml"><img src="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/compose-oci.yml/badge.svg"/></a>
+  <a href="https://openads-project.github.io/lanelet2_object_list_prediction"><img src="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/docs.yml/badge.svg"/></a>
+  <a href="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/consistency.yml"><img src="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/consistency.yml/badge.svg"/></a>
+  <br>
 </p>
 
-**TODO: Repository tagline/description**
+**ROS 2 Object List Prediction for Automated Driving based on Lanelet2**
 
 TODO: High-level repository introduction paragraph
 
@@ -13,16 +21,19 @@ TODO: High-level repository introduction paragraph
 </p>
 
 > [!IMPORTANT]
-> This repository is part of [***OpenADS***](https://github.com/openads-project), the *Open Automated Driving Stack*. *OpenADS* and its modules have been initiated and are currently being maintained by the [**Institute for Automotive Engineering (ika) at RWTH Aachen University**](https://www.ika.rwth-aachen.de/de/).
+> This repository is part of [***OpenADS***](https://github.com/openads-project), the *Open Automated Driving Systems* project. *OpenADS* and its modules have been initiated and are currently being maintained by the [**Institute for Automotive Engineering (ika) at RWTH Aachen University**](https://www.ika.rwth-aachen.de/de/).
 
 
 ## 🚀 Quick Start
+
+TODO: Teaser Image or Video presenting the main functionality with a demo or similar
+
 
 1. Start a container of the pre-built runtime image.
     ```bash
     docker run --rm -it TODO bash
     ```
-1. Inside the container, launch the pre-built nodes.
+2. Inside the container, launch the pre-built nodes.
     ```bash
     ros2 launch lanelet2_object_list_prediction lanelet2_object_list_prediction_launch.py
     ```
@@ -50,20 +61,20 @@ TODO: High-level repository introduction paragraph
 
 1. Clone the repository.
     ```bash
-    git clone https://gitlab.ika.rwth-aachen.de/jbusch/lanelet2_object_list_prediction.git
+    git clone https://github.com/openads-project/lanelet2_object_list_prediction.git
     ```
-1. Initialize the [`.openads-dev-environment`](https://github.com/openads-project/openads-dev-environment) submodule containing development environment configuration.
+2. Initialize the [`.openads-dev-environment`](https://github.com/openads-project/openads-dev-environment) submodule containing development environment configuration.
     ```bash
     cd lanelet2_object_list_prediction
     git submodule update --init --recursive
     ```
-1. Open the repository in [Visual Studio Code](https://code.visualstudio.com).
+3. Open the repository in [Visual Studio Code](https://code.visualstudio.com).
     ```bash
     code .
     ```
-1. Install the recommended VS Code extensions.
+4. Install the recommended VS Code extensions.
     > *Ctrl+Shift+P / Extensions: Show Recommended Extensions / Install Workspace Recommended Extensions (Cloud Download Icon)*
-1. Reopen the repository in a [Dev Container](https://code.visualstudio.com/docs/devcontainers/containers).
+5. Reopen the repository in a [Dev Container](https://code.visualstudio.com/docs/devcontainers/containers).
     > *Ctrl+Shift+P / Dev Containers: Rebuild and Reopen in Container*
 
 ### Build
@@ -91,7 +102,7 @@ Package and node interfaces are documented in the respective package READMEs lis
 
 | Package | Description |
 | --- | --- |
-| [lanelet2_object_list_prediction](lanelet2_object_list_prediction/README.md) | TODO |
+| [lanelet2_object_list_prediction](lanelet2_object_list_prediction/README.md) | Predicts object movements via Lanelet2 map information. |
 
 ## ⚖️ Licensing
 
@@ -103,7 +114,7 @@ Development and maintenance of this repository are supported by the following pr
 
 | Project | Funding Institution | Grant Number |
 | --- | --- | --- |
-| TODO | TODO | TODO |
+| [AIGGREGATE](https://aiggregate.eu/) | 🇪🇺 European Union | TODO |
 
 <p>
   <img src="https://www.drought.uni-freiburg.de/stressres/images/bmftr-logo/image" height=70>
