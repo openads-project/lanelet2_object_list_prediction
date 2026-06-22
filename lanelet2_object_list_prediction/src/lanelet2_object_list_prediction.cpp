@@ -30,7 +30,7 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
                                 0.1);
   this->declareAndLoadParameter("lanelet_match_max_yaw_diff_rad", lanelet_match_max_yaw_diff_rad_,
                                 "Maximum yaw difference in radians for accepting a lanelet match", true, false, false, 0.0,
-                                3.14159265359, 0.01);
+                                3.14159265359, std::nullopt);
   this->declareAndLoadParameter("prediction_horizon_s", prediction_horizon_s_, "Prediction horizon in seconds", true, false,
                                 false, 0.1, 60.0, 0.1);
   this->declareAndLoadParameter("prediction_sample_interval_s", prediction_sample_interval_s_,
