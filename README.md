@@ -5,11 +5,11 @@
   <a href="https://www.ros.org"><img src="https://img.shields.io/badge/ROS 2-jazzy-22314e"/></a>
   <a href="https://github.com/openads-project/lanelet2_object_list_prediction/releases/latest"><img src="https://img.shields.io/github/v/release/openads-project/lanelet2_object_list_prediction"/></a>
   <a href="https://github.com/openads-project/lanelet2_object_list_prediction/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openads-project/lanelet2_object_list_prediction"/></a>
+  <br>
   <a href="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/docker-ros.yml"><img src="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/docker-ros.yml/badge.svg"/></a>
   <a href="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/compose-oci.yml"><img src="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/compose-oci.yml/badge.svg"/></a>
   <a href="https://openads-project.github.io/lanelet2_object_list_prediction"><img src="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/docs.yml/badge.svg"/></a>
   <a href="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/consistency.yml"><img src="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/consistency.yml/badge.svg"/></a>
-  <br>
 </p>
 
 **ROS 2 Object List Prediction for Automated Driving based on Lanelet2**
@@ -63,18 +63,18 @@ TODO: Teaser Image or Video presenting the main functionality with a demo or sim
     ```bash
     git clone https://github.com/openads-project/lanelet2_object_list_prediction.git
     ```
-2. Initialize the [`.openads-dev-environment`](https://github.com/openads-project/openads-dev-environment) submodule containing development environment configuration.
+1. Initialize the [`.openads-dev-environment`](https://github.com/openads-project/openads-dev-environment) submodule containing development environment configuration.
     ```bash
     cd lanelet2_object_list_prediction
     git submodule update --init --recursive
     ```
-3. Open the repository in [Visual Studio Code](https://code.visualstudio.com).
+1. Open the repository in [Visual Studio Code](https://code.visualstudio.com).
     ```bash
     code .
     ```
-4. Install the recommended VS Code extensions.
+1. Install the recommended VS Code extensions.
     > *Ctrl+Shift+P / Extensions: Show Recommended Extensions / Install Workspace Recommended Extensions (Cloud Download Icon)*
-5. Reopen the repository in a [Dev Container](https://code.visualstudio.com/docs/devcontainers/containers).
+1. Reopen the repository in a [Dev Container](https://code.visualstudio.com/docs/devcontainers/containers).
     > *Ctrl+Shift+P / Dev Containers: Rebuild and Reopen in Container*
 
 ### Build
@@ -102,7 +102,7 @@ Package and node interfaces are documented in the respective package READMEs lis
 
 | Package | Description |
 | --- | --- |
-| [lanelet2_object_list_prediction](lanelet2_object_list_prediction/README.md) | Predicts object movements via Lanelet2 map information. |
+| [lanelet2_object_list_prediction](lanelet2_object_list_prediction/README.md) | Predicts object movements via Lanelet2 map information |
 
 ## ⚖️ Licensing
 

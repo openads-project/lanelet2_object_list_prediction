@@ -1,6 +1,6 @@
 # `lanelet2_object_list_prediction`
 
-Predicts object movements via Lanelet2 map information.
+Predicts object movements via Lanelet2 map information
 
 ## Nodes
 
@@ -47,8 +47,8 @@ flowchart LR
 | --- | --- | --- |
 | `object_list_topic` | `"~/object_list"` | TODO |
 | `predicted_object_list_topic` | `"~/predicted_object_list"` | TODO |
-| `name` | `"lanelet2_object_list_prediction"` | TODO |
-| `namespace` | `""` | TODO |
-| `params` | `os.path.join(get_package_share_directory("lanelet2_object_list_prediction"), "config", "params.yml")` | TODO |
-| `log_level` | `"info"` | TODO |
-| `use_sim_time` | `"false"` | TODO |
+| `name` | `"lanelet2_object_list_prediction"` | node name |
+| `namespace` | `""` | node namespace |
+| `params` | `os.path.join(get_package_share_directory("lanelet2_object_list_prediction"), "config", "params.yml")` | path to parameter file |
+| `log_level` | `"info"` | ROS logging level (debug, info, warn, error, fatal) |
+| `use_sim_time` | `"false"` | use simulation clock |
