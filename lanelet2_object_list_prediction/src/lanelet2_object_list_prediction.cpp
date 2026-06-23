@@ -506,7 +506,7 @@ void Lanelet2ObjectListPrediction::rebuildRoutingGraphFromMap() {
   }
 
   lanelet::traffic_rules::TrafficRulesUPtr traffic_rules = lanelet::traffic_rules::TrafficRulesFactory::create(
-      std::string(lanelet::Locations::Germany), std::string(lanelet::Participants::Vehicle));
+      static_cast<const char*>(lanelet::Locations::Germany), static_cast<const char*>(lanelet::Participants::Vehicle));
   routing_graph_ = lanelet::routing::RoutingGraph::build(*routing_graph_map_, *traffic_rules);
 
   RCLCPP_INFO(this->get_logger(), "Built lanelet2 routing graph");
