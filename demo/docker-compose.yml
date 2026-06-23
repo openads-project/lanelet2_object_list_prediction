@@ -1,0 +1,39 @@
+services:
+
+  lanelet2_object_list_prediction:
+    image: ghcr.io/openads-project/lanelet2_object_list_prediction:latest_open-source_ci
+    environment:
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      OBJECT_LIST_TOPIC: /simulation/object_list
+    command:
+      - /bin/bash
+      - -ic
+      - |
+        ros2 launch lanelet2_object_list_prediction lanelet2_object_list_prediction_launch.py \
+          object_list_topic:=$$OBJECT_LIST_TOPIC
+
+  lanelet2-map-server:
+    image: ghcr.io/openads-project/lanelet2_map_server:v1.2.1
+    environment:
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    command: >
+      ros2 launch lanelet2_map_server lanelet2_map_server_launch.py
+        namespace:=/localization
+    volumes:
+      - ./lanelet2_map_server/params.yml:/docker-ros/ws/install/lanelet2_map_server/share/lanelet2_map_server/config/params.yml
+      - ./lanelet2_map_server/maps:/data/maps
+
+  rviz:
+    image: ghcr.io/openads-project/monitoring:latest_init_ci
+    environment:
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      DISPLAY: ${DISPLAY}
+      use_sim_time: "true"
+    command: 
+      bash -c "rviz2 -d /config.rviz &
+               ros2 bag play /rosbag/prediction_town10.mcap --loop --clock &&
+               wait"
+    volumes:
+      - ./rviz/config.rviz:/config.rviz
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./rosbag/prediction_town10.mcap:/rosbag/prediction_town10.mcap
