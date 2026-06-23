@@ -165,12 +165,9 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
   perception_msgs::msg::ObjectList object_list_map_frame;
   if (msg->header.frame_id != ll2_interface_->map_frame_id_) {
     try {
-      object_list_map_frame = tf_buffer_->transform(*msg, ll2_interface_->map_frame_id_, tf2::durationFromSec(0.1));
-    } catch (tf2::ExtrapolationException& ex) {
-      // Time jumped backward (e.g. bag loop) — clear stale transforms so the next message can succeed
-      RCLCPP_WARN(this->get_logger(), "TF time jumped backward, clearing TF buffer: %s", ex.what());
-      tf_buffer_->clear();
-      return;
+      auto transform = tf_buffer_->lookupTransform(ll2_interface_->map_frame_id_, msg->header.frame_id, tf2::TimePointZero);
+      tf2::doTransform(*msg, object_list_map_frame, transform);
+      object_list_map_frame.header.stamp = msg->header.stamp;
     } catch (tf2::TransformException& ex) {
       RCLCPP_ERROR(this->get_logger(), "Could not transform object list from frame '%s' to frame '%s': %s. Skipping object list.",
                    msg->header.frame_id.c_str(), ll2_interface_->map_frame_id_.c_str(), ex.what());
