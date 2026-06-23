@@ -232,7 +232,7 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       lanelet::ConstLanelet lanelet = candidate_lanelet.second;
       lanelet::ConstLanelet matched_lanelet = lanelet;
       double start_arc_length = lanelet::geometry::toArcCoordinates(lanelet.centerline2d(), position_2d).length;
-      const double lanelet_length = lanelet::geometry::length(lanelet.centerline2d());
+      const double lanelet_length = static_cast<double>(lanelet::geometry::length(lanelet.centerline2d()));
       start_arc_length = std::clamp(start_arc_length, 0.0, lanelet_length);
       double orientation_difference = 0.0;
 
@@ -424,7 +424,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
       continue;
     }
 
-    const double lanelet_length = lanelet::geometry::length(centerline);
+    const double lanelet_length = static_cast<double>(lanelet::geometry::length(centerline));
     const bool is_last_lanelet = route_index + 1 == route.size();
     if (distance_on_route > lanelet_length && !is_last_lanelet) {
       distance_on_route -= lanelet_length;
@@ -453,7 +453,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
   }
 
   const lanelet::ConstLineString2d last_centerline = route.back().centerline2d();
-  const double last_length = lanelet::geometry::length(last_centerline);
+  const double last_length = static_cast<double>(lanelet::geometry::length(last_centerline));
   const lanelet::BasicPoint2d point = lanelet::geometry::interpolatedPointAtDistance(last_centerline, last_length);
   geometry_msgs::msg::Vector3 velocity;
   velocity.x = 0.0;
@@ -505,8 +505,8 @@ void Lanelet2ObjectListPrediction::rebuildRoutingGraphFromMap() {
     return;
   }
 
-  lanelet::traffic_rules::TrafficRulesUPtr traffic_rules =
-      lanelet::traffic_rules::TrafficRulesFactory::create(lanelet::Locations::Germany, lanelet::Participants::Vehicle);
+  lanelet::traffic_rules::TrafficRulesUPtr traffic_rules = lanelet::traffic_rules::TrafficRulesFactory::create(
+      std::string(lanelet::Locations::Germany), std::string(lanelet::Participants::Vehicle));
   routing_graph_ = lanelet::routing::RoutingGraph::build(*routing_graph_map_, *traffic_rules);
 
   RCLCPP_INFO(this->get_logger(), "Built lanelet2 routing graph");

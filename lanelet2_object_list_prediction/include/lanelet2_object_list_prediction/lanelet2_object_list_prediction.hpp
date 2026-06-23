@@ -207,7 +207,6 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
                                    const builtin_interfaces::msg::Time& base_time,
                                    std::size_t sample_index) const;
 
- private:
   /**
    * @brief Auto-reconfigurable parameters for dynamic reconfiguration
    */
