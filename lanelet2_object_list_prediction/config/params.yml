@@ -6,3 +6,7 @@
     prediction_horizon_s: 5.0
     prediction_sample_interval_s: 0.5
     unmatched_object_prediction_mode: kinematic
+    velocity_ema_alpha: 0.3
+    velocity_hold_time_s: 0.5
+    velocity_decay_time_constant_s: 2.0
+    arc_length_ema_alpha: 0.3
