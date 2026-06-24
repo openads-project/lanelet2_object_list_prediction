@@ -14,7 +14,7 @@
 
 **ROS 2 Object List Prediction for Automated Driving based on Lanelet2**
 
-TODO: High-level repository introduction paragraph
+The [lanelet2_object_list_prediction](lanelet2_object_list_prediction/README.md) node predicts the future trajectories of dynamic objects by leveraging [Lanelet2](https://github.com/fzi-forschungszentrum-informatik/Lanelet2) map information. It subscribes to an object list, matches each object to the most plausible lanelet based on position and orientation, and propagates the objects along the lane geometry for a configurable prediction horizon. Objects that cannot be matched to the map are handled via a fallback mode (static or kinematic). The node publishes an enriched object list with predicted states at each sampling interval.
 
 <p align="center">
   <strong>🚀 <a href="#-quick-start">Quick Start</a></strong> • <strong>💻 <a href="#-development">Development</a></strong> • <strong>📝 <a href="#-documentation">Documentation</a></strong>
@@ -26,34 +26,22 @@ TODO: High-level repository introduction paragraph
 
 ## 🚀 Quick Start
 
-TODO: Teaser Image or Video presenting the main functionality with a demo or similar
+<p align="center">
+  <img src="assets/prediction_teaser.gif" alt="lanelet2_object_list_prediction demo" width="800"/>
+</p>
 
-
-1. Start a container of the pre-built runtime image.
-    ```bash
-    docker run --rm -it TODO bash
-    ```
-2. Inside the container, launch the pre-built nodes.
-    ```bash
-    ros2 launch lanelet2_object_list_prediction lanelet2_object_list_prediction_launch.py
-    ```
-
-<!-- TODO: replace default quick start with repo-specific demo (Docker Compose)
-
-1. Launch a container of the pre-built runtime image in the provided demo [Docker Compose](demo/docker-compose.yml) setup.
+1. Launch the [`demo/docker-compose.yml`](demo/docker-compose.yml) setup. This will open RViz with a visualization of a Lanelet2 map and replay a recorded scenario with predicted object trajectories.
     ```bash
     cd demo
     xhost +local: # allow GUI forwarding from containers
-    docker compose up
+    docker compose up -d
     ```
-1. Observe ...
-1. Stop the demo and clean up.
-    > *Ctrl+C*
+2. Observe the predicted object trajectories visualized in RViz as the rosbag replay loops through the scenario.
+3. Stop the demo and clean up.
     ```bash
     docker compose down
     xhost -local: # revoke GUI forwarding permissions
     ```
--->
 
 ## 💻 Development
 
