@@ -38,6 +38,16 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
   this->declareAndLoadParameter("unmatched_object_prediction_mode", unmatched_object_prediction_mode_,
                                 "Prediction mode for objects that are not matched to the map", true, false, false, std::nullopt,
                                 std::nullopt, std::nullopt, "Allowed values: static, kinematic");
+  this->declareAndLoadParameter("velocity_ema_alpha", velocity_ema_alpha_,
+                                "EMA smoothing factor for velocity updates (0=frozen, 1=raw)", true, false, false, 0.0, 1.0);
+  this->declareAndLoadParameter("velocity_hold_time_s", velocity_hold_time_s_,
+                                "Seconds to hold the last velocity estimate before decay begins", true, false, false, 0.0, 10.0,
+                                0.1);
+  this->declareAndLoadParameter("velocity_decay_time_constant_s", velocity_decay_time_constant_s_,
+                                "Exponential decay time constant in seconds after the hold window", true, false, false, 0.1, 60.0,
+                                0.1);
+  this->declareAndLoadParameter("arc_length_ema_alpha", arc_length_ema_alpha_,
+                                "EMA smoothing factor for arc-length projection (0=frozen, 1=raw)", true, false, false, 0.0, 1.0);
   this->setup();
 }
 
@@ -177,6 +187,10 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
     object_list_map_frame = *msg;
   }
 
+  const rclcpp::Time current_stamp(object_list_map_frame.header.stamp);
+  estimateVelocities(object_list_map_frame, current_stamp);
+  last_message_stamp_ = current_stamp;
+
   std::vector<PredictionObject> prediction_objects = matchObjectListToMap(object_list_map_frame);
   std::size_t matched_object_count = 0;
   for (PredictionObject& prediction_object : prediction_objects) {
@@ -200,6 +214,98 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
   RCLCPP_INFO(this->get_logger(), "Message published with stamp: '%d'", out_msg.header.stamp.sec);
 }
 
+void Lanelet2ObjectListPrediction::estimateVelocities(perception_msgs::msg::ObjectList& object_list,
+                                                      const rclcpp::Time& current_stamp) {
+  if (current_stamp < last_message_stamp_) {
+    RCLCPP_WARN(this->get_logger(), "Time jumped backward, clearing position history");
+    position_history_.clear();
+    match_state_.clear();
+    smoothed_velocity_.clear();
+  }
+
+  // Time elapsed since the previous message, used for time-proportional velocity decay.
+  const double dt_frame =
+      (last_message_stamp_.nanoseconds() > 0) ? std::max(0.0, (current_stamp - last_message_stamp_).seconds()) : 0.0;
+
+  for (auto& object : object_list.objects) {
+    geometry_msgs::msg::Point position = perception_msgs::object_access::getPosition(object.state);
+
+    // Step 1: Obtain the best available raw velocity
+    geometry_msgs::msg::Vector3 raw_velocity;
+    bool have_raw_velocity = false;
+
+    try {
+      const double sensor_speed = perception_msgs::object_access::getVelocityMagnitude(object.state);
+      if (sensor_speed > std::numeric_limits<double>::epsilon()) {
+        raw_velocity = perception_msgs::object_access::getVelocityXYZ(object.state);
+        have_raw_velocity = true;
+        position_history_[object.id] = {position, current_stamp};
+      }
+    } catch (const std::exception&) {
+      // velocity field not set -> fall through to position-delta estimation
+    }
+
+    if (!have_raw_velocity) {
+      auto it = position_history_.find(object.id);
+      if (it != position_history_.end() && current_stamp > it->second.stamp) {
+        const double dt = (current_stamp - it->second.stamp).seconds();
+        // Require a minimum interval to avoid extremely noisy estimates from near-simultaneous messages.
+        constexpr double kMinDt_s = 0.05;
+        if (dt >= kMinDt_s) {
+          raw_velocity.x = (position.x - it->second.position.x) / dt;
+          raw_velocity.y = (position.y - it->second.position.y) / dt;
+          raw_velocity.z = (position.z - it->second.position.z) / dt;
+          if (std::hypot(raw_velocity.x, raw_velocity.y) > std::numeric_limits<double>::epsilon()) {
+            have_raw_velocity = true;
+          }
+          // Only advance the reference position once enough time has elapsed so the
+          // next delta is computed over a meaningful interval.
+          it->second.position = position;
+          it->second.stamp = current_stamp;
+        }
+        // If dt < kMinDt_s or dt == 0, keep the old reference to accumulate more time.
+      } else if (it == position_history_.end()) {
+        position_history_[object.id] = {position, current_stamp};
+      }
+      // If current_stamp == it->second.stamp (duplicate timestamp), do not update the
+      // reference position so the next frame's delta spans actual elapsed time.
+    }
+
+    // Step 2: Update per-object EMA
+    auto& sv = smoothed_velocity_[object.id];
+    if (have_raw_velocity) {
+      // first measurement
+      if (sv.last_update_stamp.nanoseconds() == 0) {
+        sv.velocity = raw_velocity;
+      }
+      // subsequent measurements are smoothed with EMA
+      else {
+        sv.velocity.x = velocity_ema_alpha_ * raw_velocity.x + (1.0 - velocity_ema_alpha_) * sv.velocity.x;
+        sv.velocity.y = velocity_ema_alpha_ * raw_velocity.y + (1.0 - velocity_ema_alpha_) * sv.velocity.y;
+        sv.velocity.z = velocity_ema_alpha_ * raw_velocity.z + (1.0 - velocity_ema_alpha_) * sv.velocity.z;
+      }
+      sv.last_update_stamp = current_stamp;
+    }
+    // if no new measurement is available, hold the last velocity for a short window, then decay slowly
+    else if (sv.last_update_stamp.nanoseconds() != 0 && dt_frame > 0.0) {
+      const double time_since_update = std::max(0.0, (current_stamp - sv.last_update_stamp).seconds());
+      if (time_since_update > velocity_hold_time_s_) {
+        const double decay = std::exp(-dt_frame / velocity_decay_time_constant_s_);
+        sv.velocity.x *= decay;
+        sv.velocity.y *= decay;
+        sv.velocity.z *= decay;
+      }
+    }
+
+    // Step 3: Write smoothed velocity to the object state, overriding sensor zero on dt==0 frames.
+    if (sv.last_update_stamp.nanoseconds() != 0 &&
+        std::hypot(sv.velocity.x, sv.velocity.y) > std::numeric_limits<double>::epsilon()) {
+      const double yaw = perception_msgs::object_access::getYaw(object.state);
+      perception_msgs::object_access::setVelocityXYZYaw(object.state, sv.velocity, yaw, false);
+    }
+  }
+}
+
 std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPrediction::matchObjectListToMap(
     const perception_msgs::msg::ObjectList& object_list) const {
   std::vector<PredictionObject> prediction_objects;
@@ -214,6 +320,13 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
   for (std::size_t object_index = 0; object_index < object_list.objects.size(); ++object_index) {
     PredictionObject prediction_object;
     prediction_object.object = object_list.objects[object_index];
+
+    const auto classification = perception_msgs::object_access::getClassWithHighestProbability(prediction_object.object);
+    // No lanelet matching for pedestrians, as they are not constrained to the road network
+    if (classification.type == perception_msgs::msg::ObjectClassification::PEDESTRIAN) {
+      prediction_objects.push_back(prediction_object);
+      continue;
+    }
 
     geometry_msgs::msg::Point position;
     double object_yaw = 0.0;
@@ -230,6 +343,9 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
     const auto candidate_lanelets =
         lanelet::geometry::findWithin2d(map->laneletLayer, position_2d, lanelet_match_max_distance_m_);
 
+    // Look up per-object state once before iterating over all candidates.
+    const auto state_it = match_state_.find(prediction_object.object.id);
+
     for (const auto& candidate_lanelet : candidate_lanelets) {
       lanelet::ConstLanelet lanelet = candidate_lanelet.second;
       lanelet::ConstLanelet matched_lanelet = lanelet;
@@ -244,7 +360,9 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       const double lanelet_difference = std::abs(wrap_angle_rad(object_yaw - lanelet_yaw));
       const double inverted_difference = std::abs(wrap_angle_rad(object_yaw - inverted_yaw));
 
-      if (inverted_difference < lanelet_difference) {
+      const bool use_inverted = (inverted_difference < lanelet_difference);
+
+      if (use_inverted) {
         matched_lanelet = lanelet.invert();
         start_arc_length = inverted_arc_length;
         orientation_difference = inverted_difference;
@@ -264,8 +382,28 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       RCLCPP_DEBUG(this->get_logger(), "Object %zu did not match any lanelet within %.2f m", object_index,
                    lanelet_match_max_distance_m_);
     } else {
-      RCLCPP_DEBUG(this->get_logger(), "Object %zu matched to %zu lanelet candidate(s)", object_index,
-                   prediction_object.lanelet_matches.size());
+      // Pick the closest lanelet; tie-break by heading alignment, then by ID for determinism.
+      std::sort(prediction_object.lanelet_matches.begin(), prediction_object.lanelet_matches.end(),
+                [](const LaneletMatch& a, const LaneletMatch& b) {
+                  if (std::abs(a.distance - b.distance) > 1e-3) return a.distance < b.distance;
+                  if (std::abs(a.orientation_difference - b.orientation_difference) > 1e-3)
+                    return a.orientation_difference < b.orientation_difference;
+                  return a.lanelet.id() < b.lanelet.id();
+                });
+      prediction_object.lanelet_matches.resize(1);
+
+      // Persist the winner and smooth its arc-length with EMA to reduce position-noise
+      // jitter. Arc-length EMA only applies when lanelet and direction are both unchanged.
+      const lanelet::Id winner_id = prediction_object.lanelet_matches[0].lanelet.id();
+      const bool winner_inverted = prediction_object.lanelet_matches[0].lanelet.inverted();
+      const bool same_state = state_it != match_state_.end() && state_it->second.lanelet_id == winner_id &&
+                              state_it->second.inverted == winner_inverted;
+
+      double& arc = prediction_object.lanelet_matches[0].start_arc_length;
+      if (same_state) {
+        arc = arc_length_ema_alpha_ * arc + (1.0 - arc_length_ema_alpha_) * state_it->second.smoothed_arc_length;
+      }
+      match_state_[prediction_object.object.id] = {winner_id, winner_inverted, arc};
     }
     prediction_objects.push_back(prediction_object);
   }
@@ -321,14 +459,17 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
       routes.push_back(lanelet::routing::LaneletPath({match.lanelet}));
     } else {
       lanelet::routing::PossiblePathsParams params;
-      params.routingCostLimit = max_travel_distance;
-      params.includeShorterPaths = true;
+      params.routingCostLimit = max_travel_distance + match.start_arc_length;
+      params.includeShorterPaths = false;
       params.includeLaneChanges = false;
       try {
         routes = routing_graph_->possiblePaths(match.lanelet, params);
       } catch (const std::exception& ex) {
         RCLCPP_WARN(this->get_logger(), "Could not create lanelet routes from matched lanelet: %s", ex.what());
         continue;
+      }
+      if (routes.empty()) {
+        routes.push_back(lanelet::routing::LaneletPath({match.lanelet}));
       }
     }
 

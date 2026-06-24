@@ -6,12 +6,14 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <lanelet2_routing/Forward.h>
 #include <lanelet2_routing/RoutingGraph.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <geometry_msgs/msg/point.hpp>
 #include <lanelet2_map_interface/lanelet2_map_interface.hpp>
 #include <perception_msgs/msg/object_list.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -187,6 +189,15 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   std::size_t getPredictionSampleCount() const;
 
   /**
+   * @brief Estimates and writes vx/vy/vz for objects whose reported velocity is zero,
+   *        using position deltas from the previous message.
+   *
+   * @param object_list object list in map frame, modified in place
+   * @param current_stamp timestamp of the current object list
+   */
+  void estimateVelocities(perception_msgs::msg::ObjectList& object_list, const rclcpp::Time& current_stamp);
+
+  /**
    * @brief Writes pose, velocity and timestamp into a predicted state
    *
    * @param state state message to update
@@ -271,6 +282,64 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Prediction mode for unmatched objects: "static" or "kinematic" (parameter)
    */
   std::string unmatched_object_prediction_mode_ = "kinematic";
+
+  /**
+   * @brief EMA smoothing factor for raw velocity updates; higher → faster response (parameter)
+   */
+  double velocity_ema_alpha_ = 0.3;
+
+  /**
+   * @brief Duration in seconds to hold the last estimated velocity before decay begins (parameter)
+   */
+  double velocity_hold_time_s_ = 0.5;
+
+  /**
+   * @brief Exponential decay time constant in seconds for velocity after the hold window (parameter)
+   */
+  double velocity_decay_time_constant_s_ = 2.0;
+
+  /**
+   * @brief EMA smoothing factor for arc-length projection along the matched lanelet (parameter)
+   */
+  double arc_length_ema_alpha_ = 0.3;
+
+  struct PositionHistoryEntry {
+    geometry_msgs::msg::Point position;
+    rclcpp::Time stamp;
+  };
+
+  /**
+   * @brief Per-object position history used to estimate velocity when the input has none
+   */
+  std::unordered_map<uint32_t, PositionHistoryEntry> position_history_;
+
+  struct SmoothedVelocity {
+    geometry_msgs::msg::Vector3 velocity;
+    rclcpp::Time last_update_stamp{0, 0, RCL_ROS_TIME};
+  };
+
+  /**
+   * @brief Per-object EMA-smoothed velocity. Held exactly during a short hold window after the
+   *        last measurement, then decayed slowly to indicate the vehicle may be stopping.
+   */
+  std::unordered_map<uint32_t, SmoothedVelocity> smoothed_velocity_;
+
+  /**
+   * @brief Stamp of the last processed object list, used to detect backward time jumps
+   */
+  rclcpp::Time last_message_stamp_{0, 0, RCL_ROS_TIME};
+
+  struct MatchState {
+    lanelet::Id lanelet_id;      ///< id() of the winning lanelet (same for forward and inverted)
+    bool inverted;               ///< whether the winning lanelet was used in inverted direction
+    double smoothed_arc_length;  ///< EMA-smoothed arc-length along the matched centerline
+  };
+
+  /**
+   * @brief Per-object match state: lanelet ID, direction, and smoothed arc-length.
+   *        Mutable because it is updated inside the logically-const matchObjectListToMap.
+   */
+  mutable std::unordered_map<uint32_t, MatchState> match_state_;
 
   /**
    * @brief Lanelet2 routing graph
