@@ -385,9 +385,12 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       // Pick the closest lanelet; tie-break by heading alignment, then by ID for determinism.
       std::sort(prediction_object.lanelet_matches.begin(), prediction_object.lanelet_matches.end(),
                 [](const LaneletMatch& a, const LaneletMatch& b) {
-                  if (std::abs(a.distance - b.distance) > 1e-3) return a.distance < b.distance;
-                  if (std::abs(a.orientation_difference - b.orientation_difference) > 1e-3)
+                  if (std::abs(a.distance - b.distance) > 1e-3) {
+                    return a.distance < b.distance;
+                  }
+                  if (std::abs(a.orientation_difference - b.orientation_difference) > 1e-3) {
                     return a.orientation_difference < b.orientation_difference;
+                  }
                   return a.lanelet.id() < b.lanelet.id();
                 });
       prediction_object.lanelet_matches.resize(1);
