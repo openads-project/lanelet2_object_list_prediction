@@ -4,7 +4,7 @@
 
   <name>lanelet2_object_list_prediction</name>
   <version>1.0.0</version>
-  <description>Predicts object movements via Lanelet2 map information</description>
+  <description>Predicts future states of multiple objects based on a Lanelet2 Map</description>
 
   <maintainer email="jean-pierre.busch@ika.rwth-aachen.de">Jean-Pierre Busch</maintainer>
   <author email="jean-pierre.busch@ika.rwth-aachen.de">Jean-Pierre Busch</author>
