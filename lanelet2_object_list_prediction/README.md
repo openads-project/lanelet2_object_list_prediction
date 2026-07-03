@@ -1,6 +1,6 @@
 # `lanelet2_object_list_prediction`
 
-Predicts object movements via Lanelet2 map information
+Predicts future states of multiple objects based on a Lanelet2 Map
 
 ## Nodes
 
