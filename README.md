@@ -90,7 +90,7 @@ Package and node interfaces are documented in the respective package READMEs lis
 
 | Package | Description |
 | --- | --- |
-| [lanelet2_object_list_prediction](lanelet2_object_list_prediction/README.md) | Predicts object movements via Lanelet2 map information |
+| [lanelet2_object_list_prediction](lanelet2_object_list_prediction/README.md) | Predicts future states of multiple objects based on a Lanelet2 Map |
 
 ## ⚖️ Licensing
 

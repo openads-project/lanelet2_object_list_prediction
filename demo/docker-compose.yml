@@ -24,7 +24,7 @@ services:
       - ./lanelet2_map_server/maps:/data/maps
 
   rviz:
-    image: ghcr.io/openads-project/monitoring:latest_init_ci
+    image: ghcr.io/openads-project/monitoring:v1.0.0
     environment:
       RMW_IMPLEMENTATION: rmw_fastrtps_cpp
       DISPLAY: ${DISPLAY}
