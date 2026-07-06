@@ -30,7 +30,7 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
                                 0.1);
   this->declareAndLoadParameter("lanelet_match_max_yaw_diff_rad", lanelet_match_max_yaw_diff_rad_,
                                 "Maximum yaw difference in radians for accepting a lanelet match", true, false, false, 0.0,
-                                3.14159265359, std::nullopt);
+                                3.14159265359);
   this->declareAndLoadParameter("prediction_horizon_s", prediction_horizon_s_, "Prediction horizon in seconds", true, false,
                                 false, 0.1, 60.0, 0.1);
   this->declareAndLoadParameter("prediction_sample_interval_s", prediction_sample_interval_s_,
@@ -155,7 +155,7 @@ void Lanelet2ObjectListPrediction::setup() {
 }
 
 void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg::ObjectList::ConstSharedPtr& msg) {
-  RCLCPP_INFO(this->get_logger(), "Message received with stamp: '%d'", msg->header.stamp.sec);
+  RCLCPP_DEBUG(this->get_logger(), "Message received with stamp: '%d'", msg->header.stamp.sec);
 
   if (!checkMap(true)) {
     RCLCPP_WARN(this->get_logger(), "Lanelet2 map is not loaded yet, skipping object list");
@@ -165,9 +165,7 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
   perception_msgs::msg::ObjectList object_list_map_frame;
   if (msg->header.frame_id != ll2_interface_->map_frame_id_) {
     try {
-      auto transform = tf_buffer_->lookupTransform(ll2_interface_->map_frame_id_, msg->header.frame_id, tf2::TimePointZero);
-      tf2::doTransform(*msg, object_list_map_frame, transform);
-      object_list_map_frame.header.stamp = msg->header.stamp;
+      object_list_map_frame = tf_buffer_->transform(*msg, ll2_interface_->map_frame_id_, tf2::durationFromSec(0.1));
     } catch (tf2::TransformException& ex) {
       RCLCPP_ERROR(this->get_logger(), "Could not transform object list from frame '%s' to frame '%s': %s. Skipping object list.",
                    msg->header.frame_id.c_str(), ll2_interface_->map_frame_id_.c_str(), ex.what());
@@ -197,7 +195,7 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
   }
 
   publisher_->publish(out_msg);
-  RCLCPP_INFO(this->get_logger(), "Message published with stamp: '%d'", out_msg.header.stamp.sec);
+  RCLCPP_DEBUG(this->get_logger(), "Message published with stamp: '%d'", out_msg.header.stamp.sec);
 }
 
 std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPrediction::matchObjectListToMap(
@@ -251,9 +249,7 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       const double lanelet_difference = std::abs(wrap_angle_rad(object_yaw - lanelet_yaw));
       const double inverted_difference = std::abs(wrap_angle_rad(object_yaw - inverted_yaw));
 
-      const bool use_inverted = (inverted_difference < lanelet_difference);
-
-      if (use_inverted) {
+      if (inverted_difference < lanelet_difference) {
         matched_lanelet = lanelet.invert();
         start_arc_length = inverted_arc_length;
         orientation_difference = inverted_difference;
@@ -273,18 +269,8 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       RCLCPP_DEBUG(this->get_logger(), "Object %zu did not match any lanelet within %.2f m", object_index,
                    lanelet_match_max_distance_m_);
     } else {
-      // Pick the closest lanelet; tie-break by heading alignment, then by ID for determinism.
-      std::sort(prediction_object.lanelet_matches.begin(), prediction_object.lanelet_matches.end(),
-                [](const LaneletMatch& a, const LaneletMatch& b) {
-                  if (std::abs(a.distance - b.distance) > 1e-3) {
-                    return a.distance < b.distance;
-                  }
-                  if (std::abs(a.orientation_difference - b.orientation_difference) > 1e-3) {
-                    return a.orientation_difference < b.orientation_difference;
-                  }
-                  return a.lanelet.id() < b.lanelet.id();
-                });
-      prediction_object.lanelet_matches.resize(1);
+      RCLCPP_DEBUG(this->get_logger(), "Object %zu matched to %zu lanelet candidate(s)", object_index,
+                   prediction_object.lanelet_matches.size());
     }
     prediction_objects.push_back(prediction_object);
   }

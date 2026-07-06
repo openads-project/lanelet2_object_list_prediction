@@ -6,14 +6,12 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include <lanelet2_routing/Forward.h>
 #include <lanelet2_routing/RoutingGraph.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
-#include <geometry_msgs/msg/point.hpp>
 #include <lanelet2_map_interface/lanelet2_map_interface.hpp>
 #include <perception_msgs/msg/object_list.hpp>
 #include <rclcpp/rclcpp.hpp>
