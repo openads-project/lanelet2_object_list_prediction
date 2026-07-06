@@ -6,9 +6,9 @@
   <version>1.0.0</version>
   <description>Predicts future states of multiple objects based on a Lanelet2 Map</description>
 
-  <maintainer email="jean-pierre.busch@ika.rwth-aachen.de">Jean-Pierre Busch</maintainer>
-  <author email="jean-pierre.busch@ika.rwth-aachen.de">Jean-Pierre Busch</author>
-  <author email="silas.damaschke@ika.rwth-aachen.de">Silas Damaschke</author>
+  <maintainer email="silas.damaschke@rwth-aachen.de">Silas Damaschke</maintainer>
+  <author email="jean-pierre.busch@rwth-aachen.de">Jean-Pierre Busch</author>
+  <author email="silas.damaschke@rwth-aachen.de">Silas Damaschke</author>
 
   <license>Apache-2.0</license>
 
