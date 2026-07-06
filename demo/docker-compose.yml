@@ -1,3 +1,5 @@
+name: lanelet2-object-list-prediction-demo
+
 services:
 
   lanelet2_object_list_prediction:
@@ -31,9 +33,9 @@ services:
       use_sim_time: "true"
     command: 
       bash -c "rviz2 -d /config.rviz &
-               ros2 bag play /rosbag/prediction_town10.mcap --loop &&
+               ros2 bag play /rosbag/prediction_town10_2.mcap --loop &&
                wait"
     volumes:
       - ./rviz/config.rviz:/config.rviz
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - ./rosbag/prediction_town10.mcap:/rosbag/prediction_town10.mcap
+      - ./rosbag/prediction_town10_2.mcap:/rosbag/prediction_town10_2.mcap
