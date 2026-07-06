@@ -8,7 +8,7 @@ Predicts future states of multiple objects based on a Lanelet2 Map
 
 Subscribes to a list of objects in an arbitrary sensor frame, transforms them into the Lanelet2 map frame, and publishes an enriched object list with trajectory predictions attached to each object.
 
-For vehicles and other road users, the node matches each object to the nearest lanelet in the map, queries the routing graph for all reachable paths within the prediction horizon, and samples predicted states at fixed time intervals along each path. Per-object velocity is smoothed with an exponential moving average to suppress sensor noise and frame-to-frame timestamp jitter. Pedestrians are not matched to the road network and receive a constant-velocity prediction instead.
+For vehicles and other road users, the node matches each object to the nearest lanelet in the map, queries the routing graph for all reachable paths within the prediction horizon, and samples predicted states at fixed time intervals along each path. Pedestrians are not matched to the road network and receive a constant-velocity prediction instead.
 
 ```mermaid
 flowchart LR
