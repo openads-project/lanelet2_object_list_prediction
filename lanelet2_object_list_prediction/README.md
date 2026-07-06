@@ -40,10 +40,6 @@ flowchart LR
 | `prediction_horizon_s` | `float` | `5.0` | Prediction horizon in seconds |
 | `prediction_sample_interval_s` | `float` | `0.5` | Sampling interval of predicted states in seconds |
 | `unmatched_object_prediction_mode` | `string` | `"kinematic"` | Prediction mode for objects that are not matched to the map |
-| `velocity_ema_alpha` | `float` | `0.3` | EMA smoothing factor for velocity updates (0=frozen, 1=raw) |
-| `velocity_hold_time_s` | `float` | `0.5` | Seconds to hold the last velocity estimate before decay begins |
-| `velocity_decay_time_constant_s` | `float` | `2.0` | Exponential decay time constant in seconds after the hold window |
-| `arc_length_ema_alpha` | `float` | `0.3` | EMA smoothing factor for arc-length projection (0=frozen, 1=raw) |
 
 ## Launch Files
 
