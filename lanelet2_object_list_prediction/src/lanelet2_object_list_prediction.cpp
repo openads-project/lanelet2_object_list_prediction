@@ -327,7 +327,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
     } else {
       lanelet::routing::PossiblePathsParams params;
       params.routingCostLimit = max_travel_distance + match.start_arc_length;
-      params.includeShorterPaths = false;
+      params.includeShorterPaths = true;
       params.includeLaneChanges = false;
       try {
         routes = routing_graph_->possiblePaths(match.lanelet, params);
