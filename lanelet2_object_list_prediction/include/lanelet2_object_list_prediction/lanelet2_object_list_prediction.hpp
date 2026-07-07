@@ -1,3 +1,6 @@
+// Copyright Institute for Automotive Engineering (ika), RWTH Aachen University
+// SPDX-License-Identifier: Apache-2.0
+
 #pragma once
 
 #include <memory>
@@ -27,6 +30,9 @@ inline constexpr bool is_vector_v = is_vector<C>::value;
  */
 class Lanelet2ObjectListPrediction : public rclcpp::Node {
  public:
+  /**
+   * @brief Constructs the node, declares parameters, and calls setup
+   */
   Lanelet2ObjectListPrediction();
 
  private:
@@ -201,7 +207,6 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
                                    const builtin_interfaces::msg::Time& base_time,
                                    std::size_t sample_index) const;
 
- private:
   /**
    * @brief Auto-reconfigurable parameters for dynamic reconfiguration
    */
@@ -245,7 +250,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   /**
    * @brief Maximum object-to-lanelet matching distance in meters (parameter)
    */
-  double lanelet_match_max_distance_m_ = 0.0;
+  double lanelet_match_max_distance_m_ = 0.5;
 
   /**
    * @brief Maximum yaw difference for accepting a lanelet match in radians (parameter)

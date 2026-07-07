@@ -1,3 +1,6 @@
+// Copyright Institute for Automotive Engineering (ika), RWTH Aachen University
+// SPDX-License-Identifier: Apache-2.0
+
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -27,7 +30,7 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
                                 0.1);
   this->declareAndLoadParameter("lanelet_match_max_yaw_diff_rad", lanelet_match_max_yaw_diff_rad_,
                                 "Maximum yaw difference in radians for accepting a lanelet match", true, false, false, 0.0,
-                                3.14159265359, 0.01);
+                                3.14159265359);
   this->declareAndLoadParameter("prediction_horizon_s", prediction_horizon_s_, "Prediction horizon in seconds", true, false,
                                 false, 0.1, 60.0, 0.1);
   this->declareAndLoadParameter("prediction_sample_interval_s", prediction_sample_interval_s_,
@@ -152,7 +155,7 @@ void Lanelet2ObjectListPrediction::setup() {
 }
 
 void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg::ObjectList::ConstSharedPtr& msg) {
-  RCLCPP_INFO(this->get_logger(), "Message received with stamp: '%d'", msg->header.stamp.sec);
+  RCLCPP_DEBUG(this->get_logger(), "Message received with stamp: '%d'", msg->header.stamp.sec);
 
   if (!checkMap(true)) {
     RCLCPP_WARN(this->get_logger(), "Lanelet2 map is not loaded yet, skipping object list");
@@ -192,7 +195,7 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
   }
 
   publisher_->publish(out_msg);
-  RCLCPP_INFO(this->get_logger(), "Message published with stamp: '%d'", out_msg.header.stamp.sec);
+  RCLCPP_DEBUG(this->get_logger(), "Message published with stamp: '%d'", out_msg.header.stamp.sec);
 }
 
 std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPrediction::matchObjectListToMap(
@@ -209,6 +212,13 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
   for (std::size_t object_index = 0; object_index < object_list.objects.size(); ++object_index) {
     PredictionObject prediction_object;
     prediction_object.object = object_list.objects[object_index];
+
+    const auto classification = perception_msgs::object_access::getClassWithHighestProbability(prediction_object.object);
+    // No lanelet matching for pedestrians, as they are not constrained to the road network
+    if (classification.type == perception_msgs::msg::ObjectClassification::PEDESTRIAN) {
+      prediction_objects.push_back(prediction_object);
+      continue;
+    }
 
     geometry_msgs::msg::Point position;
     double object_yaw = 0.0;
@@ -229,7 +239,7 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       lanelet::ConstLanelet lanelet = candidate_lanelet.second;
       lanelet::ConstLanelet matched_lanelet = lanelet;
       double start_arc_length = lanelet::geometry::toArcCoordinates(lanelet.centerline2d(), position_2d).length;
-      const double lanelet_length = lanelet::geometry::length(lanelet.centerline2d());
+      const double lanelet_length = static_cast<double>(lanelet::geometry::length(lanelet.centerline2d()));
       start_arc_length = std::clamp(start_arc_length, 0.0, lanelet_length);
       double orientation_difference = 0.0;
 
@@ -316,7 +326,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
       routes.push_back(lanelet::routing::LaneletPath({match.lanelet}));
     } else {
       lanelet::routing::PossiblePathsParams params;
-      params.routingCostLimit = max_travel_distance;
+      params.routingCostLimit = max_travel_distance + match.start_arc_length;
       params.includeShorterPaths = true;
       params.includeLaneChanges = false;
       try {
@@ -324,6 +334,9 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
       } catch (const std::exception& ex) {
         RCLCPP_WARN(this->get_logger(), "Could not create lanelet routes from matched lanelet: %s", ex.what());
         continue;
+      }
+      if (routes.empty()) {
+        routes.push_back(lanelet::routing::LaneletPath({match.lanelet}));
       }
     }
 
@@ -421,7 +434,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
       continue;
     }
 
-    const double lanelet_length = lanelet::geometry::length(centerline);
+    const double lanelet_length = static_cast<double>(lanelet::geometry::length(centerline));
     const bool is_last_lanelet = route_index + 1 == route.size();
     if (distance_on_route > lanelet_length && !is_last_lanelet) {
       distance_on_route -= lanelet_length;
@@ -450,7 +463,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
   }
 
   const lanelet::ConstLineString2d last_centerline = route.back().centerline2d();
-  const double last_length = lanelet::geometry::length(last_centerline);
+  const double last_length = static_cast<double>(lanelet::geometry::length(last_centerline));
   const lanelet::BasicPoint2d point = lanelet::geometry::interpolatedPointAtDistance(last_centerline, last_length);
   geometry_msgs::msg::Vector3 velocity;
   velocity.x = 0.0;
@@ -502,8 +515,8 @@ void Lanelet2ObjectListPrediction::rebuildRoutingGraphFromMap() {
     return;
   }
 
-  lanelet::traffic_rules::TrafficRulesUPtr traffic_rules =
-      lanelet::traffic_rules::TrafficRulesFactory::create(lanelet::Locations::Germany, lanelet::Participants::Vehicle);
+  lanelet::traffic_rules::TrafficRulesUPtr traffic_rules = lanelet::traffic_rules::TrafficRulesFactory::create(
+      static_cast<const char*>(lanelet::Locations::Germany), static_cast<const char*>(lanelet::Participants::Vehicle));
   routing_graph_ = lanelet::routing::RoutingGraph::build(*routing_graph_map_, *traffic_rules);
 
   RCLCPP_INFO(this->get_logger(), "Built lanelet2 routing graph");
@@ -524,6 +537,13 @@ bool Lanelet2ObjectListPrediction::checkMap(bool handle_update) {
 
 }  // namespace lanelet2_object_list_prediction
 
+/**
+ * @brief Initializes ROS, spins the prediction node, and shuts down on exit
+ *
+ * @param[in] argc number of command-line arguments
+ * @param[in] argv command-line arguments
+ * @return process exit code
+ */
 int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
   auto node = std::make_shared<lanelet2_object_list_prediction::Lanelet2ObjectListPrediction>();

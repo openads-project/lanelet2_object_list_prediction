@@ -1,3 +1,6 @@
+// Copyright Institute for Automotive Engineering (ika), RWTH Aachen University
+// SPDX-License-Identifier: Apache-2.0
+
 #pragma once
 
 #include <algorithm>
@@ -32,7 +35,7 @@ inline double wrap_angle_rad(double angle_rad, double min_val = -M_PI, double ma
  */
 inline double computeLaneletYawAtArcLength(const lanelet::ConstLanelet& lanelet, double arc_length) {
   const lanelet::ConstLineString2d centerline = lanelet.centerline2d();
-  const double lanelet_length = lanelet::geometry::length(centerline);
+  const double lanelet_length = static_cast<double>(lanelet::geometry::length(centerline));
   const double sample_distance = std::min(0.5, std::max(0.01, lanelet_length * 0.1));
   const double before_arc_length = std::max(0.0, arc_length - sample_distance);
   const double after_arc_length = std::min(lanelet_length, arc_length + sample_distance);
