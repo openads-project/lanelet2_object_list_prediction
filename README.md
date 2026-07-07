@@ -1,48 +1,47 @@
 # lanelet2_object_list_prediction
 
 <p align="center">
+  <a href="https://github.com/openads-project"><img src="https://img.shields.io/badge/OpenADS-f5ff01"/></a>
   <a href="https://www.ros.org"><img src="https://img.shields.io/badge/ROS 2-jazzy-22314e"/></a>
+  <a href="https://github.com/openads-project/lanelet2_object_list_prediction/releases/latest"><img src="https://img.shields.io/github/v/release/openads-project/lanelet2_object_list_prediction"/></a>
+  <a href="https://github.com/openads-project/lanelet2_object_list_prediction/blob/main/LICENSE"><img src="https://img.shields.io/github/license/openads-project/lanelet2_object_list_prediction"/></a>
+  <br>
+  <a href="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/docker-ros.yml"><img src="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/docker-ros.yml/badge.svg"/></a>
+  <a href="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/compose-oci.yml"><img src="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/compose-oci.yml/badge.svg"/></a>
+  <a href="https://openads-project.github.io/lanelet2_object_list_prediction"><img src="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/docs.yml/badge.svg"/></a>
+  <a href="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/consistency.yml"><img src="https://github.com/openads-project/lanelet2_object_list_prediction/actions/workflows/consistency.yml/badge.svg"/></a>
 </p>
 
-**TODO: Repository tagline/description**
+**ROS 2 Object List Prediction for Automated Driving based on Lanelet2**
 
-TODO: High-level repository introduction paragraph
+The [lanelet2_object_list_prediction](lanelet2_object_list_prediction/README.md) node predicts the future trajectories of dynamic objects by leveraging [Lanelet2](https://github.com/fzi-forschungszentrum-informatik/Lanelet2) map information. It subscribes to an object list in an arbitrary sensor frame, matches each object to the most plausible lanelet based on position and orientation, and propagates the objects along the lane geometry for a configurable prediction horizon. Objects that cannot be matched to the map are handled via a fallback mode (static or kinematic). The node publishes an enriched object list, transformed into the Lanelet2 map frame, with predicted states at each sampling interval.
 
 <p align="center">
   <strong>🚀 <a href="#-quick-start">Quick Start</a></strong> • <strong>💻 <a href="#-development">Development</a></strong> • <strong>📝 <a href="#-documentation">Documentation</a></strong>
 </p>
 
 > [!IMPORTANT]
-> This repository is part of [***OpenADS***](https://github.com/openads-project), the *Open Automated Driving Stack*. *OpenADS* and its modules have been initiated and are currently being maintained by the [**Institute for Automotive Engineering (ika) at RWTH Aachen University**](https://www.ika.rwth-aachen.de/de/).
+> This repository is part of [***OpenADS***](https://github.com/openads-project), the *Open Automated Driving Systems* project. *OpenADS* and its modules have been initiated and are currently being maintained by the [**Institute for Automotive Engineering (ika) at RWTH Aachen University**](https://www.ika.rwth-aachen.de/de/).
 
 
 ## 🚀 Quick Start
 
-1. Start a container of the pre-built runtime image.
-    ```bash
-    docker run --rm -it TODO bash
-    ```
-1. Inside the container, launch the pre-built nodes.
-    ```bash
-    ros2 launch lanelet2_object_list_prediction lanelet2_object_list_prediction_launch.py
-    ```
+<p align="center">
+  <img src="assets/prediction_teaser.gif" alt="lanelet2_object_list_prediction demo" width="800"/>
+</p>
 
-<!-- TODO: replace default quick start with repo-specific demo (Docker Compose)
-
-1. Launch a container of the pre-built runtime image in the provided demo [Docker Compose](demo/docker-compose.yml) setup.
+1. Launch the [`demo/docker-compose.yml`](demo/docker-compose.yml) setup. This will open RViz with a visualization of a Lanelet2 map and replay a recorded scenario with predicted object trajectories.
     ```bash
     cd demo
     xhost +local: # allow GUI forwarding from containers
-    docker compose up
+    docker compose up -d
     ```
-1. Observe ...
-1. Stop the demo and clean up.
-    > *Ctrl+C*
+2. Observe the predicted object trajectories visualized in RViz as the rosbag replay loops through the scenario.
+3. Stop the demo and clean up.
     ```bash
     docker compose down
     xhost -local: # revoke GUI forwarding permissions
     ```
--->
 
 ## 💻 Development
 
@@ -50,7 +49,7 @@ TODO: High-level repository introduction paragraph
 
 1. Clone the repository.
     ```bash
-    git clone https://gitlab.ika.rwth-aachen.de/jbusch/lanelet2_object_list_prediction.git
+    git clone https://github.com/openads-project/lanelet2_object_list_prediction.git
     ```
 1. Initialize the [`.openads-dev-environment`](https://github.com/openads-project/openads-dev-environment) submodule containing development environment configuration.
     ```bash
@@ -91,7 +90,7 @@ Package and node interfaces are documented in the respective package READMEs lis
 
 | Package | Description |
 | --- | --- |
-| [lanelet2_object_list_prediction](lanelet2_object_list_prediction/README.md) | TODO |
+| [lanelet2_object_list_prediction](lanelet2_object_list_prediction/README.md) | Predicts future states of multiple objects based on a Lanelet2 Map |
 
 ## ⚖️ Licensing
 
@@ -103,7 +102,7 @@ Development and maintenance of this repository are supported by the following pr
 
 | Project | Funding Institution | Grant Number |
 | --- | --- | --- |
-| TODO | TODO | TODO |
+| [AIGGREGATE](https://aiggregate.eu/) | 🇪🇺 European Union | 101202457 |
 
 <p>
   <img src="https://www.drought.uni-freiburg.de/stressres/images/bmftr-logo/image" height=70>
