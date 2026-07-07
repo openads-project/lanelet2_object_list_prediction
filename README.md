@@ -14,7 +14,7 @@
 
 **ROS 2 Object List Prediction for Automated Driving based on Lanelet2**
 
-The [lanelet2_object_list_prediction](lanelet2_object_list_prediction/README.md) node predicts the future trajectories of dynamic objects by leveraging [Lanelet2](https://github.com/fzi-forschungszentrum-informatik/Lanelet2) map information. It subscribes to an object list, matches each object to the most plausible lanelet based on position and orientation, and propagates the objects along the lane geometry for a configurable prediction horizon. Objects that cannot be matched to the map are handled via a fallback mode (static or kinematic). The node publishes an enriched object list with predicted states at each sampling interval.
+The [lanelet2_object_list_prediction](lanelet2_object_list_prediction/README.md) node predicts the future trajectories of dynamic objects by leveraging [Lanelet2](https://github.com/fzi-forschungszentrum-informatik/Lanelet2) map information. It subscribes to an object list in an arbitrary sensor frame, matches each object to the most plausible lanelet based on position and orientation, and propagates the objects along the lane geometry for a configurable prediction horizon. Objects that cannot be matched to the map are handled via a fallback mode (static or kinematic). The node publishes an enriched object list, transformed into the Lanelet2 map frame, with predicted states at each sampling interval.
 
 <p align="center">
   <strong>🚀 <a href="#-quick-start">Quick Start</a></strong> • <strong>💻 <a href="#-development">Development</a></strong> • <strong>📝 <a href="#-documentation">Documentation</a></strong>
