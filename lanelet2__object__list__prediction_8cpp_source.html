@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">lanelet2_object_list_prediction<span id="projectnumber">&#160;v1.0.0</span>
+   <div id="projectname">lanelet2_object_list_prediction<span id="projectnumber">&#160;v1.0.1</span>
    </div>
   </td>
  </tr>
@@ -255,11 +255,11 @@ $(function(){initNavTree('lanelet2__object__list__prediction_8cpp_source.html','
 <div class="line"><a id="l00146" name="l00146"></a><span class="lineno">  146</span> </div>
 <div class="line"><a id="l00147" name="l00147"></a><span class="lineno">  147</span>  <span class="comment">// subscriber for handling incoming messages</span></div>
 <div class="line"><a id="l00148" name="l00148"></a><span class="lineno">  148</span>  <a class="code hl_variable" href="classlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction.html#a48a74d4f20b2fd30d2ed3320d16374c3">subscriber_</a> = this-&gt;create_subscription&lt;perception_msgs::msg::ObjectList&gt;(</div>
-<div class="line"><a id="l00149" name="l00149"></a><span class="lineno">  149</span>      <span class="stringliteral">&quot;~/object_list&quot;</span>, 1, std::bind(&amp;<a class="code hl_function" href="classlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction.html#af2f0708c7598ccf2e64757f79bf3d6c5">Lanelet2ObjectListPrediction::objectListCallback</a>, <span class="keyword">this</span>, std::placeholders::_1));</div>
+<div class="line"><a id="l00149" name="l00149"></a><span class="lineno">  149</span>      <span class="stringliteral">&quot;~/tracked_object_list&quot;</span>, 1, std::bind(&amp;<a class="code hl_function" href="classlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction.html#af2f0708c7598ccf2e64757f79bf3d6c5">Lanelet2ObjectListPrediction::objectListCallback</a>, <span class="keyword">this</span>, std::placeholders::_1));</div>
 <div class="line"><a id="l00150" name="l00150"></a><span class="lineno">  150</span>  RCLCPP_INFO(this-&gt;get_logger(), <span class="stringliteral">&quot;Subscribed to &#39;%s&#39;&quot;</span>, <a class="code hl_variable" href="classlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction.html#a48a74d4f20b2fd30d2ed3320d16374c3">subscriber_</a>-&gt;get_topic_name());</div>
 <div class="line"><a id="l00151" name="l00151"></a><span class="lineno">  151</span> </div>
 <div class="line"><a id="l00152" name="l00152"></a><span class="lineno">  152</span>  <span class="comment">// publisher for publishing outgoing messages</span></div>
-<div class="line"><a id="l00153" name="l00153"></a><span class="lineno">  153</span>  <a class="code hl_variable" href="classlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction.html#a43a6ea98e1a0a1e6d552da3d8abe8fdf">publisher_</a> = this-&gt;create_publisher&lt;perception_msgs::msg::ObjectList&gt;(<span class="stringliteral">&quot;~/predicted_object_list&quot;</span>, 1);</div>
+<div class="line"><a id="l00153" name="l00153"></a><span class="lineno">  153</span>  <a class="code hl_variable" href="classlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction.html#a43a6ea98e1a0a1e6d552da3d8abe8fdf">publisher_</a> = this-&gt;create_publisher&lt;perception_msgs::msg::ObjectList&gt;(<span class="stringliteral">&quot;~/object_list&quot;</span>, 1);</div>
 <div class="line"><a id="l00154" name="l00154"></a><span class="lineno">  154</span>  RCLCPP_INFO(this-&gt;get_logger(), <span class="stringliteral">&quot;Publishing to &#39;%s&#39;&quot;</span>, <a class="code hl_variable" href="classlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction.html#a43a6ea98e1a0a1e6d552da3d8abe8fdf">publisher_</a>-&gt;get_topic_name());</div>
 <div class="line"><a id="l00155" name="l00155"></a><span class="lineno">  155</span>}</div>
 </div>
