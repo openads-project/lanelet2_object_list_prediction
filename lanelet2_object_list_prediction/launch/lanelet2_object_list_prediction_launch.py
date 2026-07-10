@@ -16,7 +16,7 @@ def generate_launch_description():
     """Generate launch description with resolved launch arguments."""
 
     remappable_topics = [
-        DeclareLaunchArgument("input_object_list_topic", default_value="~/input_object_list"),
+        DeclareLaunchArgument("tracked_object_list_topic", default_value="~/tracked_object_list"),
         DeclareLaunchArgument("object_list_topic", default_value="~/object_list"),
     ]
 

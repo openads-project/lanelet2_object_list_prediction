@@ -7,7 +7,7 @@ services:
       NAMESPACE: /
       NAME: lanelet2_object_list_prediction
       # --- inputs ----
-      INPUT_OBJECT_LIST_TOPIC: ~/input_object_list
+      TRACKED_OBJECT_LIST_TOPIC: ~/tracked_object_list
       # --- outputs ---
       OBJECT_LIST_TOPIC: ~/object_list
       # --- other -----
@@ -24,7 +24,7 @@ services:
           log_level:=$${LOG_LEVEL} \
           use_sim_time:=$${USE_SIM_TIME} \
           params:=$${PARAMS} \
-          input_object_list_topic:=$${INPUT_OBJECT_LIST_TOPIC} \
+          tracked_object_list_topic:=$${TRACKED_OBJECT_LIST_TOPIC} \
           object_list_topic:=$${OBJECT_LIST_TOPIC}
     # volumes:
     #   - ./params.yml:/docker-ros/ws/install/lanelet2_object_list_prediction/share/lanelet2_object_list_prediction/config/params.yml
