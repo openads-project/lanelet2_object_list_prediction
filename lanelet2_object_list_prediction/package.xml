@@ -3,7 +3,7 @@
 <package format="3">
 
   <name>lanelet2_object_list_prediction</name>
-  <version>1.0.0</version>
+  <version>1.0.1</version>
   <description>Predicts future states of multiple objects based on a Lanelet2 Map</description>
 
   <maintainer email="silas.damaschke@rwth-aachen.de">Silas Damaschke</maintainer>
