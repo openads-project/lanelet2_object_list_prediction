@@ -13,8 +13,8 @@ For vehicles and other road users, the node matches each object to the nearest l
 ```mermaid
 flowchart LR
     NODE("lanelet2_object_list_prediction")
-    S0:::hidden -->|~/object_list| NODE
-    NODE -->|~/predicted_object_list| P0:::hidden
+    S0:::hidden -->|~/input_object_list| NODE
+    NODE -->|~/object_list| P0:::hidden
     classDef hidden display: none;
 ```
 
@@ -22,13 +22,13 @@ flowchart LR
 
 | Topic | Type | Description |
 | --- | --- | --- |
-| `~/object_list` | `perception_msgs/msg/ObjectList` | Objects in any TF-reachable frame |
+| `~/input_object_list` | `perception_msgs/msg/ObjectList` | Objects in any TF-reachable frame |
 
 #### Published Topics
 
 | Topic | Type | Description |
 | --- | --- | --- |
-| `~/predicted_object_list` | `perception_msgs/msg/ObjectList` | Objects in map frame with state predictions attached |
+| `~/object_list` | `perception_msgs/msg/ObjectList` | Objects in map frame with state predictions attached |
 
 #### Parameters
 
@@ -47,8 +47,8 @@ flowchart LR
 
 | Argument | Default | Description |
 | --- | --- | --- |
-| `object_list_topic` | `"~/object_list"` | Topic to subscribe for incoming objects |
-| `predicted_object_list_topic` | `"~/predicted_object_list"` | Topic to publish objects with predictions |
+| `input_object_list_topic` | `"~/input_object_list"` | Topic to subscribe for incoming objects |
+| `object_list_topic` | `"~/object_list"` | Topic to publish objects with predictions |
 | `name` | `"lanelet2_object_list_prediction"` | node name |
 | `namespace` | `""` | node namespace |
 | `params` | `os.path.join(get_package_share_directory("lanelet2_object_list_prediction"), "config", "params.yml")` | path to parameter file |
