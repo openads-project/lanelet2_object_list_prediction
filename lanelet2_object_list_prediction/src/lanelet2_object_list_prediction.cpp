@@ -146,11 +146,11 @@ void Lanelet2ObjectListPrediction::setup() {
 
   // subscriber for handling incoming messages
   subscriber_ = this->create_subscription<perception_msgs::msg::ObjectList>(
-      "~/object_list", 1, std::bind(&Lanelet2ObjectListPrediction::objectListCallback, this, std::placeholders::_1));
+      "~/tracked_object_list", 1, std::bind(&Lanelet2ObjectListPrediction::objectListCallback, this, std::placeholders::_1));
   RCLCPP_INFO(this->get_logger(), "Subscribed to '%s'", subscriber_->get_topic_name());
 
   // publisher for publishing outgoing messages
-  publisher_ = this->create_publisher<perception_msgs::msg::ObjectList>("~/predicted_object_list", 1);
+  publisher_ = this->create_publisher<perception_msgs::msg::ObjectList>("~/object_list", 1);
   RCLCPP_INFO(this->get_logger(), "Publishing to '%s'", publisher_->get_topic_name());
 }
 
