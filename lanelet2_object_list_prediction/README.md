@@ -13,7 +13,7 @@ For vehicles and other road users, the node matches each object to the nearest l
 ```mermaid
 flowchart LR
     NODE("lanelet2_object_list_prediction")
-    S0:::hidden -->|~/input_object_list| NODE
+    S0:::hidden -->|~/tracked_object_list| NODE
     NODE -->|~/object_list| P0:::hidden
     classDef hidden display: none;
 ```
@@ -22,7 +22,7 @@ flowchart LR
 
 | Topic | Type | Description |
 | --- | --- | --- |
-| `~/input_object_list` | `perception_msgs/msg/ObjectList` | Objects in any TF-reachable frame |
+| `~/tracked_object_list` | `perception_msgs/msg/ObjectList` | Objects in any TF-reachable frame |
 
 #### Published Topics
 
@@ -47,7 +47,7 @@ flowchart LR
 
 | Argument | Default | Description |
 | --- | --- | --- |
-| `input_object_list_topic` | `"~/input_object_list"` | Topic to subscribe for incoming objects |
+| `tracked_object_list_topic` | `"~/tracked_object_list"` | Topic to subscribe for incoming objects |
 | `object_list_topic` | `"~/object_list"` | Topic to publish objects with predictions |
 | `name` | `"lanelet2_object_list_prediction"` | node name |
 | `namespace` | `""` | node namespace |
