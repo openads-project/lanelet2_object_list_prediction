@@ -3,7 +3,7 @@ name: lanelet2-object-list-prediction-demo
 services:
 
   lanelet2_object_list_prediction:
-    image: ghcr.io/openads-project/lanelet2_object_list_prediction:v1.0.1
+    image: ghcr.io/openads-project/lanelet2_object_list_prediction:v1.0.2
     environment:
       RMW_IMPLEMENTATION: rmw_fastrtps_cpp
     command: |
