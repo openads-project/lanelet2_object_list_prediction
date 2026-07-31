@@ -1,7 +1,7 @@
 apiVersion: v2
 name: lanelet2-object-list-prediction
-version: 1.0.1
-appVersion: 1.0.1
+version: 1.0.2
+appVersion: 1.0.2
 description: ROS 2 Object List Prediction for Automated Driving based on Lanelet2
 dependencies:
   - repository: oci://ghcr.io/openads-project/openads-helm
