@@ -1,0 +1,29 @@
+openadservice:
+  name: lanelet2-object-list-prediction
+  image: ghcr.io/openads-project/lanelet2_object_list_prediction:v1.0.1
+  env:
+    # --- name ------
+    NAMESPACE: /
+    NAME: lanelet2_object_list_prediction
+    # --- inputs ----
+    TRACKED_OBJECT_LIST_TOPIC: ~/tracked_object_list
+    # --- outputs ---
+    OBJECT_LIST_TOPIC: ~/object_list
+    # --- other -----
+    LOG_LEVEL: info
+    USE_SIM_TIME: false
+    PARAMS: /docker-ros/ws/install/lanelet2_object_list_prediction/share/lanelet2_object_list_prediction/config/params.yml
+  args:
+  - /bin/bash
+  - -ic
+  - |
+    ros2 launch lanelet2_object_list_prediction lanelet2_object_list_prediction_launch.py \
+      namespace:=${NAMESPACE} \
+      name:=${NAME} \
+      log_level:=${LOG_LEVEL} \
+      use_sim_time:=${USE_SIM_TIME} \
+      params:=${PARAMS} \
+      tracked_object_list_topic:=${TRACKED_OBJECT_LIST_TOPIC} \
+      object_list_topic:=${OBJECT_LIST_TOPIC}
+  rosParamFileMountPath: /docker-ros/ws/install/lanelet2_object_list_prediction/share/lanelet2_object_list_prediction/config/params.yml
+  rosParamFileData: null
