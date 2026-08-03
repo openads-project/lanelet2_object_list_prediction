@@ -31,5 +31,6 @@ var classlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction =
     [ "subscriber_", "classlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction.html#a48a74d4f20b2fd30d2ed3320d16374c3", null ],
     [ "tf_buffer_", "classlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction.html#af2dd3d6392a1eaf154f12f8dfde65d76", null ],
     [ "tf_listener_", "classlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction.html#aada5c144091bab6e70ff9fe741f3f2b1", null ],
+    [ "traffic_rules_", "classlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction.html#a6ffd1b0fdceac54b49d94790523117a3", null ],
     [ "unmatched_object_prediction_mode_", "classlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction.html#a0d26c166b7e474808a5e25bf9d58c89e", null ]
 ];
