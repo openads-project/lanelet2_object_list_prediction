@@ -10,6 +10,7 @@
 
 #include <lanelet2_routing/Forward.h>
 #include <lanelet2_routing/RoutingGraph.h>
+#include <lanelet2_traffic_rules/TrafficRules.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <lanelet2_map_interface/lanelet2_map_interface.hpp>
@@ -276,6 +277,11 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Lanelet2 routing graph
    */
   lanelet::routing::RoutingGraphUPtr routing_graph_;
+
+  /**
+   * @brief Traffic rules used for lanelet matching and routing
+   */
+  lanelet::traffic_rules::TrafficRulesUPtr traffic_rules_;
 
   /**
    * @brief Map pointer used when the routing graph was built
