@@ -261,6 +261,10 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
         continue;
       }
 
+      if (traffic_rules_ == nullptr || !traffic_rules_->canPass(matched_lanelet)) {
+        continue;
+      }
+
       prediction_object.lanelet_matches.push_back(
           LaneletMatch{matched_lanelet, candidate_lanelet.first, start_arc_length, orientation_difference});
     }
@@ -509,15 +513,16 @@ void Lanelet2ObjectListPrediction::setPredictedStateKinematics(perception_msgs::
 
 void Lanelet2ObjectListPrediction::rebuildRoutingGraphFromMap() {
   routing_graph_.reset();
+  traffic_rules_.reset();
   routing_graph_map_ = ll2_interface_->getMapPtr();
   if (routing_graph_map_ == nullptr) {
     RCLCPP_WARN(this->get_logger(), "Lanelet2 map pointer is null, cannot build routing graph");
     return;
   }
 
-  lanelet::traffic_rules::TrafficRulesUPtr traffic_rules = lanelet::traffic_rules::TrafficRulesFactory::create(
-      static_cast<const char*>(lanelet::Locations::Germany), static_cast<const char*>(lanelet::Participants::Vehicle));
-  routing_graph_ = lanelet::routing::RoutingGraph::build(*routing_graph_map_, *traffic_rules);
+  traffic_rules_ = lanelet::traffic_rules::TrafficRulesFactory::create(static_cast<const char*>(lanelet::Locations::Germany),
+                                                                       static_cast<const char*>(lanelet::Participants::Vehicle));
+  routing_graph_ = lanelet::routing::RoutingGraph::build(*routing_graph_map_, *traffic_rules_);
 
   RCLCPP_INFO(this->get_logger(), "Built lanelet2 routing graph");
 }
