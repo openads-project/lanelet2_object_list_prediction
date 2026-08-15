@@ -13,6 +13,7 @@ openadservice:
     LOG_LEVEL: info
     USE_SIM_TIME: false
     PARAMS: /docker-ros/ws/install/lanelet2_object_list_prediction/share/lanelet2_object_list_prediction/config/params.yml
+    ROS_TRACING: false
   args:
   - /bin/bash
   - -ic
@@ -23,6 +24,7 @@ openadservice:
       log_level:=${LOG_LEVEL} \
       use_sim_time:=${USE_SIM_TIME} \
       params:=${PARAMS} \
+      ros_tracing:=${ROS_TRACING} \
       tracked_object_list_topic:=${TRACKED_OBJECT_LIST_TOPIC} \
       object_list_topic:=${OBJECT_LIST_TOPIC}
   rosParamFileMountPath: /docker-ros/ws/install/lanelet2_object_list_prediction/share/lanelet2_object_list_prediction/config/params.yml
