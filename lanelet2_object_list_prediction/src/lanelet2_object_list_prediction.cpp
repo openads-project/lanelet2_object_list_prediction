@@ -157,6 +157,16 @@ void Lanelet2ObjectListPrediction::setup() {
 void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg::ObjectList::ConstSharedPtr& msg) {
   RCLCPP_DEBUG(this->get_logger(), "Message received with stamp: '%d'", msg->header.stamp.sec);
 
+  // tf2 discards incoming transforms that are older than the buffered ones, so a jump back in time, e.g. caused by a
+  // looping dataset player, would make all transformations fail until the buffered transforms are dropped
+  const rclcpp::Time stamp(msg->header.stamp, RCL_ROS_TIME);
+  if (last_object_list_stamp_.has_value() && stamp < last_object_list_stamp_.value()) {
+    RCLCPP_WARN(this->get_logger(), "Object list time stamps jumped %.2f s back in time, resetting TF buffer",
+                (last_object_list_stamp_.value() - stamp).seconds());
+    resetTfBuffer();
+  }
+  last_object_list_stamp_ = stamp;
+
   if (!checkMap(true)) {
     RCLCPP_WARN(this->get_logger(), "Lanelet2 map is not loaded yet, skipping object list");
     return;
@@ -196,6 +206,14 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
 
   publisher_->publish(out_msg);
   RCLCPP_DEBUG(this->get_logger(), "Message published with stamp: '%d'", out_msg.header.stamp.sec);
+}
+
+void Lanelet2ObjectListPrediction::resetTfBuffer() {
+  // the listener is recreated first to stop it from writing into the buffer and to resubscribe to the static
+  // transforms, which are latched and hence not resent by their publishers after the buffer has been dropped
+  tf_listener_.reset();
+  tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 }
 
 std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPrediction::matchObjectListToMap(

@@ -110,6 +110,11 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   void objectListCallback(const perception_msgs::msg::ObjectList::ConstSharedPtr& msg);
 
   /**
+   * @brief Recreates TF buffer and listener to discard transforms buffered before a jump back in time
+   */
+  void resetTfBuffer();
+
+  /**
    * @brief Match all objects in an object list to lanelets in the current map
    *
    * @param object_list object list in map frame
@@ -237,6 +242,11 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief TF listener for object-list transformations
    */
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+
+  /**
+   * @brief Time stamp of the previously received object list
+   */
+  std::optional<rclcpp::Time> last_object_list_stamp_;
 
   /**
    * @brief Lanelet2 map interface
