@@ -1,0 +1,38 @@
+name: lanelet2-object-list-prediction-demo
+
+services:
+
+  lanelet2_object_list_prediction:
+    image: ghcr.io/openads-project/lanelet2_object_list_prediction:latest_dataset-demo_ci
+    environment:
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    volumes:
+      - ./autonomy_datasets/params_lanelet2_object_list_prediction.yml:/params.yml
+    command: |
+      ros2 launch lanelet2_object_list_prediction lanelet2_object_list_prediction_launch.py
+        tracked_object_list_topic:=/object_list/lidar_01
+        object_list_topic:=/predicted_objects
+        params:=/params.yml
+
+  autonomy-datasets:
+    image: ghcr.io/thinking-cars/autonomy_datasets:latest_nuscenes-dynamics_ci
+    environment:
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      DISPLAY: ${DISPLAY}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${DATASET_DIR:-data}:/datasets
+      - ./autonomy_datasets/params_nuscenes.yml:/params.yml
+      - ./autonomy_datasets/config.rviz:/docker-ros/ws/install/autonomy_datasets/share/autonomy_datasets/config/config.rviz
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: |
+      ros2 launch autonomy_datasets autonomy_datasets.launch.py
+        dataset:=nuscenes loop:=true config:=/params.yml
