@@ -8,8 +8,10 @@ import os
 from ament_index_python import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node, SetParameter
+from tracetools_launch.action import Trace
 
 
 def generate_launch_description():
@@ -32,6 +34,7 @@ def generate_launch_description():
             "log_level", default_value="info", description="ROS logging level (debug, info, warn, error, fatal)"
         ),
         DeclareLaunchArgument("use_sim_time", default_value="false", description="use simulation clock"),
+        DeclareLaunchArgument("ros_tracing", default_value="false", description="enable tracing"),
         *remappable_topics,
     ]
 
@@ -46,6 +49,11 @@ def generate_launch_description():
             remappings=[(la.default_value[0].text, LaunchConfiguration(la.name)) for la in remappable_topics],
             output="screen",
             emulate_tty=True,
+        ),
+        Trace(
+            session_name="trace",
+            dual_session=True,
+            condition=IfCondition(LaunchConfiguration("ros_tracing")),
         )
     ]
 
