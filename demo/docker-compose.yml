@@ -8,7 +8,7 @@ services:
       RMW_IMPLEMENTATION: rmw_fastrtps_cpp
     command: |
       ros2 launch lanelet2_object_list_prediction lanelet2_object_list_prediction_launch.py
-        object_list_topic:=/simulation/object_list
+        tracked_object_list_topic:=/simulation/object_list
 
   lanelet2-map-server:
     image: ghcr.io/openads-project/lanelet2_map_server:v1.2.2
