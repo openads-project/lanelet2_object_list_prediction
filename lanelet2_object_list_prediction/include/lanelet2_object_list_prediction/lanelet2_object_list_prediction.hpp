@@ -169,6 +169,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @param route lanelet route to sample
    * @param start_arc_length current object position along the first route lanelet
    * @param travel_distance distance to travel along the route from the current position
+   * @param speed longitudinal speed at the sampled position
    * @param base_time time stamp of the input object list
    * @param sample_index zero-based prediction sample index
    * @return predicted object state at the requested sample
@@ -177,6 +178,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
                                                               const lanelet::routing::LaneletPath& route,
                                                               double start_arc_length,
                                                               double travel_distance,
+                                                              double speed,
                                                               const builtin_interfaces::msg::Time& base_time,
                                                               std::size_t sample_index) const;
 
@@ -267,6 +269,26 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Sampling interval of predicted states in seconds (parameter)
    */
   double prediction_sample_interval_s_ = 0.5;
+
+  /**
+   * @brief Maximum lateral acceleration used to limit speed on curved map paths (parameter)
+   */
+  double max_lateral_acceleration_mps2_ = 2.5;
+
+  /**
+   * @brief Maximum longitudinal deceleration magnitude used to approach curve speed limits (parameter)
+   */
+  double max_longitudinal_deceleration_mps2_ = 2.0;
+
+  /**
+   * @brief Maximum longitudinal acceleration used to return to the observed speed after curves (parameter)
+   */
+  double max_longitudinal_acceleration_mps2_ = 1.0;
+
+  /**
+   * @brief Probability assigned to each laterally infeasible route when feasible alternatives exist (parameter)
+   */
+  double infeasible_hypothesis_probability_ = 0.01;
 
   /**
    * @brief Prediction mode for unmatched objects: "static" or "kinematic" (parameter)

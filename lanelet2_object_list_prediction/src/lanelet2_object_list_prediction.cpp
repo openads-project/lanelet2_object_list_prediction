@@ -5,6 +5,8 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <numeric>
+#include <vector>
 
 #include <lanelet2_core/Attribute.h>
 #include <lanelet2_core/geometry/Lanelet.h>
@@ -22,6 +24,147 @@
 
 namespace lanelet2_object_list_prediction {
 
+namespace {
+
+constexpr double kRouteProfileResolutionM = 0.25;
+constexpr double kCurvatureSampleDistanceM = 1.0;
+constexpr double kKinematicEpsilon = 1e-6;
+
+struct RouteMotionSample {
+  double distance{0.0};
+  double speed{0.0};
+  double time{0.0};
+};
+
+struct RouteMotionProfile {
+  std::vector<RouteMotionSample> samples;
+  bool lateral_limit_feasible{true};
+};
+
+double remainingRouteLength(const lanelet::routing::LaneletPath& route, double start_arc_length) {
+  double length = 0.0;
+  for (std::size_t route_index = 0; route_index < route.size(); ++route_index) {
+    const double lanelet_length = static_cast<double>(lanelet::geometry::length(route[route_index].centerline2d()));
+    length += route_index == 0 ? std::max(0.0, lanelet_length - start_arc_length) : lanelet_length;
+  }
+  return length;
+}
+
+lanelet::BasicPoint2d pointOnRoute(const lanelet::routing::LaneletPath& route, double start_arc_length, double travel_distance) {
+  double distance_on_route = start_arc_length + std::max(0.0, travel_distance);
+  for (std::size_t route_index = 0; route_index < route.size(); ++route_index) {
+    const lanelet::ConstLineString2d centerline = route[route_index].centerline2d();
+    const double lanelet_length = static_cast<double>(lanelet::geometry::length(centerline));
+    if (distance_on_route > lanelet_length && route_index + 1 < route.size()) {
+      distance_on_route -= lanelet_length;
+      continue;
+    }
+    return lanelet::geometry::interpolatedPointAtDistance(centerline, std::clamp(distance_on_route, 0.0, lanelet_length));
+  }
+
+  const lanelet::ConstLineString2d centerline = route.back().centerline2d();
+  const double centerline_length = static_cast<double>(lanelet::geometry::length(centerline));
+  return lanelet::geometry::interpolatedPointAtDistance(centerline, centerline_length);
+}
+
+double routeCurvature(const lanelet::routing::LaneletPath& route,
+                      double start_arc_length,
+                      double route_length,
+                      double travel_distance) {
+  const double before_distance = std::max(0.0, travel_distance - kCurvatureSampleDistanceM);
+  const double after_distance = std::min(route_length, travel_distance + kCurvatureSampleDistanceM);
+  if (after_distance - before_distance < kKinematicEpsilon) return 0.0;
+
+  const lanelet::BasicPoint2d before = pointOnRoute(route, start_arc_length, before_distance);
+  const lanelet::BasicPoint2d center = pointOnRoute(route, start_arc_length, travel_distance);
+  const lanelet::BasicPoint2d after = pointOnRoute(route, start_arc_length, after_distance);
+  const double a = (center - before).norm();
+  const double b = (after - center).norm();
+  const double c = (after - before).norm();
+  const double denominator = a * b * c;
+  if (denominator < kKinematicEpsilon) return 0.0;
+
+  const double cross =
+      (center.x() - before.x()) * (after.y() - before.y()) - (center.y() - before.y()) * (after.x() - before.x());
+  return 2.0 * std::abs(cross) / denominator;
+}
+
+RouteMotionProfile buildRouteMotionProfile(const lanelet::routing::LaneletPath& route,
+                                           double start_arc_length,
+                                           double initial_speed,
+                                           double max_lateral_acceleration,
+                                           double max_longitudinal_acceleration,
+                                           double max_longitudinal_deceleration,
+                                           bool stop_at_route_end) {
+  const double route_length = remainingRouteLength(route, start_arc_length);
+  const std::size_t segment_count =
+      std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(route_length / kRouteProfileResolutionM)));
+  RouteMotionProfile profile;
+  profile.samples.resize(segment_count + 1);
+  std::vector<double> curve_speed_limits(segment_count + 1, initial_speed);
+
+  for (std::size_t index = 0; index <= segment_count; ++index) {
+    const double distance = route_length * static_cast<double>(index) / static_cast<double>(segment_count);
+    profile.samples[index].distance = distance;
+    const double curvature = routeCurvature(route, start_arc_length, route_length, distance);
+    if (curvature > kKinematicEpsilon) {
+      curve_speed_limits[index] = std::min(initial_speed, std::sqrt(max_lateral_acceleration / curvature));
+    }
+  }
+  std::vector<double> speed_limits = curve_speed_limits;
+  if (stop_at_route_end) speed_limits.back() = 0.0;
+
+  // Propagate curve speed limits backwards so braking starts early enough.
+  for (std::size_t index = segment_count; index > 0; --index) {
+    const double distance = profile.samples[index].distance - profile.samples[index - 1].distance;
+    const double reachable_speed =
+        std::sqrt(speed_limits[index] * speed_limits[index] + 2.0 * max_longitudinal_deceleration * distance);
+    speed_limits[index - 1] = std::min(speed_limits[index - 1], reachable_speed);
+  }
+
+  profile.samples.front().speed = initial_speed;
+  if (initial_speed > curve_speed_limits.front() + kKinematicEpsilon) profile.lateral_limit_feasible = false;
+  for (std::size_t index = 1; index <= segment_count; ++index) {
+    const double distance = profile.samples[index].distance - profile.samples[index - 1].distance;
+    const double previous_speed = profile.samples[index - 1].speed;
+    const double minimum_reachable_speed =
+        std::sqrt(std::max(0.0, previous_speed * previous_speed - 2.0 * max_longitudinal_deceleration * distance));
+    const double maximum_reachable_speed =
+        std::sqrt(previous_speed * previous_speed + 2.0 * max_longitudinal_acceleration * distance);
+    const double desired_speed = std::min(initial_speed, speed_limits[index]);
+    profile.samples[index].speed = std::clamp(desired_speed, minimum_reachable_speed, maximum_reachable_speed);
+    if (profile.samples[index].speed > curve_speed_limits[index] + kKinematicEpsilon) {
+      profile.lateral_limit_feasible = false;
+    }
+
+    const double average_speed = 0.5 * (previous_speed + profile.samples[index].speed);
+    profile.samples[index].time = average_speed > kKinematicEpsilon ? profile.samples[index - 1].time + distance / average_speed
+                                                                    : std::numeric_limits<double>::infinity();
+  }
+  return profile;
+}
+
+RouteMotionSample sampleRouteMotionAtTime(const std::vector<RouteMotionSample>& profile, double target_time) {
+  const auto upper = std::lower_bound(profile.begin(), profile.end(), target_time,
+                                      [](const RouteMotionSample& sample, double time) { return sample.time < time; });
+  if (upper == profile.begin()) return *upper;
+  if (upper == profile.end()) return profile.back();
+
+  const RouteMotionSample& previous = *(upper - 1);
+  const double segment_duration = upper->time - previous.time;
+  if (!std::isfinite(segment_duration) || segment_duration < kKinematicEpsilon) return previous;
+
+  const double elapsed = std::clamp(target_time - previous.time, 0.0, segment_duration);
+  const double acceleration = (upper->speed - previous.speed) / segment_duration;
+  RouteMotionSample sample;
+  sample.time = target_time;
+  sample.speed = std::max(0.0, previous.speed + acceleration * elapsed);
+  sample.distance = previous.distance + previous.speed * elapsed + 0.5 * acceleration * elapsed * elapsed;
+  return sample;
+}
+
+}  // namespace
+
 Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_object_list_prediction") {
   this->declareAndLoadParameter("ll2_map_server_name", ll2_map_server_name_, "Name of lanelet2_map_server node", false, false,
                                 true);
@@ -35,6 +178,18 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
                                 false, 0.1, 60.0, 0.1);
   this->declareAndLoadParameter("prediction_sample_interval_s", prediction_sample_interval_s_,
                                 "Sampling interval of predicted states in seconds", true, false, false, 0.01, 10.0, 0.01);
+  this->declareAndLoadParameter("max_lateral_acceleration_mps2", max_lateral_acceleration_mps2_,
+                                "Maximum lateral acceleration used to limit map-based prediction speed", true, false, false, 0.01,
+                                20.0, 0.01);
+  this->declareAndLoadParameter("max_longitudinal_deceleration_mps2", max_longitudinal_deceleration_mps2_,
+                                "Maximum longitudinal deceleration magnitude used before curves", true, false, false, 0.01, 20.0,
+                                0.01);
+  this->declareAndLoadParameter("max_longitudinal_acceleration_mps2", max_longitudinal_acceleration_mps2_,
+                                "Maximum longitudinal acceleration used to return to the observed speed after curves", true,
+                                false, false, 0.01, 20.0, 0.01);
+  this->declareAndLoadParameter("infeasible_hypothesis_probability", infeasible_hypothesis_probability_,
+                                "Probability assigned to each laterally infeasible route when feasible alternatives exist", true,
+                                false, false, 0.0, 1.0, 0.01);
   this->declareAndLoadParameter("unmatched_object_prediction_mode", unmatched_object_prediction_mode_,
                                 "Prediction mode for objects that are not matched to the map", true, false, false, std::nullopt,
                                 std::nullopt, std::nullopt, "Allowed values: static, kinematic");
@@ -297,9 +452,14 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
     }
   }
 
-  const double probability = 1.0 / static_cast<double>(predictions.size());
-  for (perception_msgs::msg::ObjectStatePrediction& prediction : predictions) {
-    prediction.probability = probability;
+  const double probability_sum = std::accumulate(
+      predictions.begin(), predictions.end(), 0.0,
+      [](double sum, const perception_msgs::msg::ObjectStatePrediction& prediction) { return sum + prediction.probability; });
+  if (probability_sum <= kKinematicEpsilon) {
+    const double probability = 1.0 / static_cast<double>(predictions.size());
+    for (perception_msgs::msg::ObjectStatePrediction& prediction : predictions) {
+      prediction.probability = probability;
+    }
   }
   return predictions;
 }
@@ -323,6 +483,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
 
   const std::size_t sample_count = getPredictionSampleCount();
   const double max_travel_distance = speed * prediction_sample_interval_s_ * static_cast<double>(sample_count);
+  std::vector<bool> lateral_limit_feasibility;
 
   for (const LaneletMatch& match : prediction_object.lanelet_matches) {
     lanelet::routing::LaneletPaths routes;
@@ -347,13 +508,38 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
     for (const lanelet::routing::LaneletPath& lanelet_route : routes) {
       perception_msgs::msg::ObjectStatePrediction prediction;
       prediction.states.reserve(sample_count);
+      const double route_length = remainingRouteLength(lanelet_route, match.start_arc_length);
+      const bool stop_at_route_end = route_length + kKinematicEpsilon < max_travel_distance;
+      const RouteMotionProfile motion_profile =
+          buildRouteMotionProfile(lanelet_route, match.start_arc_length, speed, max_lateral_acceleration_mps2_,
+                                  max_longitudinal_acceleration_mps2_, max_longitudinal_deceleration_mps2_, stop_at_route_end);
       for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
-        const double travel_distance = speed * prediction_sample_interval_s_ * static_cast<double>(sample_index + 1);
+        const double sample_time = prediction_sample_interval_s_ * static_cast<double>(sample_index + 1);
+        const RouteMotionSample motion = sampleRouteMotionAtTime(motion_profile.samples, sample_time);
         prediction.states.push_back(sampleStateOnLaneletRoute(prediction_object.object.state, lanelet_route,
-                                                              match.start_arc_length, travel_distance, base_time, sample_index));
+                                                              match.start_arc_length, motion.distance, motion.speed, base_time,
+                                                              sample_index));
       }
       predictions.push_back(prediction);
+      lateral_limit_feasibility.push_back(motion_profile.lateral_limit_feasible);
     }
+  }
+
+  const std::size_t feasible_count =
+      static_cast<std::size_t>(std::count(lateral_limit_feasibility.begin(), lateral_limit_feasibility.end(), true));
+  const std::size_t infeasible_count = predictions.size() - feasible_count;
+  if (feasible_count > 0) {
+    const double infeasible_probability =
+        infeasible_count > 0 ? std::min(infeasible_hypothesis_probability_, 1.0 / static_cast<double>(infeasible_count + 1))
+                             : 0.0;
+    const double feasible_probability =
+        (1.0 - infeasible_probability * static_cast<double>(infeasible_count)) / static_cast<double>(feasible_count);
+    for (std::size_t index = 0; index < predictions.size(); ++index) {
+      predictions[index].probability = lateral_limit_feasibility[index] ? feasible_probability : infeasible_probability;
+    }
+  } else if (!predictions.empty()) {
+    const double probability = 1.0 / static_cast<double>(predictions.size());
+    for (auto& prediction : predictions) prediction.probability = probability;
   }
 
   return predictions;
@@ -413,6 +599,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
     const lanelet::routing::LaneletPath& route,
     double start_arc_length,
     double travel_distance,
+    double speed,
     const builtin_interfaces::msg::Time& base_time,
     std::size_t sample_index) const {
   perception_msgs::msg::ObjectState state = base_state;
@@ -421,7 +608,6 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
     return state;
   }
 
-  const double speed = travel_distance / (prediction_sample_interval_s_ * static_cast<double>(sample_index + 1));
   double distance_on_route = start_arc_length + travel_distance;
   geometry_msgs::msg::Point fallback_position;
   try {

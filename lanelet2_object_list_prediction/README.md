@@ -39,6 +39,10 @@ flowchart LR
 | `lanelet_match_max_yaw_diff_rad` | `float` | `1.57079632679` | Maximum yaw difference in radians for accepting a lanelet match |
 | `prediction_horizon_s` | `float` | `5.0` | Prediction horizon in seconds |
 | `prediction_sample_interval_s` | `float` | `0.5` | Sampling interval of predicted states in seconds |
+| `max_lateral_acceleration_mps2` | `float` | `2.5` | Maximum lateral acceleration used to limit map-based prediction speed |
+| `max_longitudinal_deceleration_mps2` | `float` | `2.0` | Maximum longitudinal deceleration magnitude used before curves |
+| `max_longitudinal_acceleration_mps2` | `float` | `1.0` | Maximum longitudinal acceleration used to return to the observed speed after curves |
+| `infeasible_hypothesis_probability` | `float` | `0.01` | Probability assigned to each laterally infeasible route when feasible alternatives exist |
 | `unmatched_object_prediction_mode` | `string` | `"kinematic"` | Prediction mode for objects that are not matched to the map |
 
 ## Launch Files
