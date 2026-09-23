@@ -60,11 +60,29 @@ install(DIRECTORY config
 )
 
 if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
   find_package(ament_lint_auto REQUIRED)
   set(ament_cmake_clang_format_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../.vscode/format/.clang-format)
   set(ament_cmake_clang_tidy_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../.vscode/lint/.clang-tidy)
   set(ament_cmake_flake8_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../.vscode/lint/ament_flake8.ini)
   ament_lint_auto_find_test_dependencies()
+
+  ament_add_gtest(test_curvature test/test_curvature.cpp)
+  target_include_directories(test_curvature PRIVATE include)
+  target_link_libraries(test_curvature
+    rclcpp::rclcpp
+    ${geometry_msgs_TARGETS}
+    ${perception_msgs_TARGETS}
+    ${lanelet2_core_LIBRARIES}
+    ${lanelet2_routing_LIBRARIES}
+    ${lanelet2_traffic_rules_LIBRARIES}
+    lanelet2_map_interface::lanelet2_map_interface
+    perception_msgs_utils::perception_msgs_utils
+    tf2::tf2
+    tf2_perception_msgs::tf2_perception_msgs
+    tf2_ros::tf2_ros
+  )
+  target_dependencies_as_system(test_curvature)
 endif()
 
 ament_package()
