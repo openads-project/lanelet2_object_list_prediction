@@ -188,7 +188,8 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
                                 "Maximum longitudinal acceleration used to return to the observed speed after curves", true,
                                 false, false, 0.01, 20.0, 0.01);
   this->declareAndLoadParameter("infeasible_hypothesis_probability", infeasible_hypothesis_probability_,
-                                "Probability assigned to each laterally infeasible route when feasible alternatives exist", true,
+                                "Probability assigned to each laterally infeasible route when feasible alternatives exist; "
+                                "zero discards infeasible routes", true,
                                 false, false, 0.0, 1.0, 0.01);
   this->declareAndLoadParameter("unmatched_object_prediction_mode", unmatched_object_prediction_mode_,
                                 "Prediction mode for objects that are not matched to the map", true, false, false, std::nullopt,
@@ -513,6 +514,9 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
       const RouteMotionProfile motion_profile =
           buildRouteMotionProfile(lanelet_route, match.start_arc_length, speed, max_lateral_acceleration_mps2_,
                                   max_longitudinal_acceleration_mps2_, max_longitudinal_deceleration_mps2_, stop_at_route_end);
+      if (!motion_profile.lateral_limit_feasible && infeasible_hypothesis_probability_ == 0.0) {
+        continue;
+      }
       for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
         const double sample_time = prediction_sample_interval_s_ * static_cast<double>(sample_index + 1);
         const RouteMotionSample motion = sampleRouteMotionAtTime(motion_profile.samples, sample_time);

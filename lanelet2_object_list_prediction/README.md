@@ -42,7 +42,7 @@ flowchart LR
 | `max_lateral_acceleration_mps2` | `float` | `2.5` | Maximum lateral acceleration used to limit map-based prediction speed |
 | `max_longitudinal_deceleration_mps2` | `float` | `2.0` | Maximum longitudinal deceleration magnitude used before curves |
 | `max_longitudinal_acceleration_mps2` | `float` | `1.0` | Maximum longitudinal acceleration used to return to the observed speed after curves |
-| `infeasible_hypothesis_probability` | `float` | `0.01` | Probability assigned to each laterally infeasible route when feasible alternatives exist |
+| `infeasible_hypothesis_probability` | `float` | `0.01` | Probability assigned to each laterally infeasible route when feasible alternatives exist. Set to `0.0` to discard infeasible routes entirely; if none remain, use `unmatched_object_prediction_mode`. |
 | `unmatched_object_prediction_mode` | `string` | `"kinematic"` | Prediction mode for objects that are not matched to the map |
 
 ## Launch Files
