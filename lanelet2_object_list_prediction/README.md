@@ -55,7 +55,8 @@ Map-based predictions project measured planar velocity onto the matched lanelet.
 including backward motion within their current lanelet. The path starts with the observed lateral velocity and smoothly
 converges to the centerline over a distance chosen from the lateral acceleration limit. Body heading remains separate from travel
 direction. Nearly sideways motion uses the Cartesian constant-velocity fallback. Reverse predictions stop at the current
-lanelet boundary because the routing graph describes forward legal travel.
+lanelet boundary because the routing graph describes forward legal travel. A route is marked infeasible when
+its first predicted displacement would require more acceleration than the configured longitudinal or lateral limits.
 
 Right-of-way interactions are evaluated once from the nominal hypotheses of the complete scene. Every route hypothesis can
 cause another object to yield. Yielding predictions brake before the mapped yield line, wait until ego or another predicted

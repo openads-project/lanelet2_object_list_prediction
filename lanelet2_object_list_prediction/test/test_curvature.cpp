@@ -166,6 +166,32 @@ TEST(RouteSampling, ReversingVelocityPointsAgainstBodyHeading) {
   EXPECT_NEAR(std::abs(routeYaw(reverse_route, 10.0, 10.0, 0.0)), M_PI, 1e-6);
 }
 
+TEST(RouteSampling, RejectsObservedTransientSidewaysJump) {
+  geometry_msgs::msg::Point observed;
+  observed.x = 2293.33;
+  observed.y = 1548.35;
+  geometry_msgs::msg::Vector3 velocity;
+  velocity.x = -0.29;
+  velocity.y = 4.10;
+  geometry_msgs::msg::Point predicted;
+  predicted.x = 2291.17;
+  predicted.y = 1550.44;
+
+  EXPECT_FALSE(initialMotionFeasible(observed, velocity, predicted, 0.5, 2.5, 1.0, 2.0));
+}
+
+TEST(RouteSampling, AcceptsReachableInitialDisplacement) {
+  geometry_msgs::msg::Point observed;
+  geometry_msgs::msg::Vector3 velocity;
+  velocity.x = 0.0;
+  velocity.y = 10.0;
+  geometry_msgs::msg::Point predicted;
+  predicted.x = -0.25;  // 2 m/s² lateral acceleration over 0.5 s.
+  predicted.y = 4.875;  // 1 m/s² longitudinal deceleration over 0.5 s.
+
+  EXPECT_TRUE(initialMotionFeasible(observed, velocity, predicted, 0.5, 2.5, 1.0, 2.0));
+}
+
 TEST(RouteSampling, StationaryObjectRetainsItsLateralOffset) {
   lanelet::Lanelet straight = makeLaneletWithCenterline(8, {{0.0, 0.0}, {20.0, 0.0}});
   const lanelet::routing::LaneletPath route({straight});

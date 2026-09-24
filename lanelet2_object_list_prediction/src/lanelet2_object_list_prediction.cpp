@@ -48,6 +48,30 @@ LaneletVelocity velocityAlongLanelet(const geometry_msgs::msg::Vector3& velocity
   return {velocity.x * std::cos(yaw) + velocity.y * std::sin(yaw), -velocity.x * std::sin(yaw) + velocity.y * std::cos(yaw)};
 }
 
+bool initialMotionFeasible(const geometry_msgs::msg::Point& observed_position,
+                           const geometry_msgs::msg::Vector3& observed_velocity,
+                           const geometry_msgs::msg::Point& predicted_position,
+                           double sample_interval,
+                           double max_lateral_acceleration,
+                           double max_longitudinal_acceleration,
+                           double max_longitudinal_deceleration) {
+  // A constant acceleration reaching the first position would need this
+  // change in velocity. Check it in the observed direction of travel.
+  const double scale = 2.0 / (sample_interval * sample_interval);
+  const double acceleration_x = (predicted_position.x - observed_position.x - observed_velocity.x * sample_interval) * scale;
+  const double acceleration_y = (predicted_position.y - observed_position.y - observed_velocity.y * sample_interval) * scale;
+  const double speed = std::hypot(observed_velocity.x, observed_velocity.y);
+  if (speed <= kMotionDirectionMinSpeedMps) {
+    return std::hypot(acceleration_x, acceleration_y) <=
+           std::max({max_lateral_acceleration, max_longitudinal_acceleration, max_longitudinal_deceleration}) + kKinematicEpsilon;
+  }
+  const double longitudinal = (acceleration_x * observed_velocity.x + acceleration_y * observed_velocity.y) / speed;
+  const double lateral = (acceleration_y * observed_velocity.x - acceleration_x * observed_velocity.y) / speed;
+  return longitudinal <= max_longitudinal_acceleration + kKinematicEpsilon &&
+         longitudinal >= -max_longitudinal_deceleration - kKinematicEpsilon &&
+         std::abs(lateral) <= max_lateral_acceleration + kKinematicEpsilon;
+}
+
 struct YieldConstraint {
   double stop_distance{0.0};
   double release_time{0.0};
@@ -724,7 +748,6 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
 
 void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& prediction_object,
                                                              const builtin_interfaces::msg::Time& base_time) const {
-  (void)base_time;
   prediction_object.hypotheses.clear();
   if (routing_graph_ == nullptr) {
     RCLCPP_WARN(this->get_logger(), "Routing graph is not available, cannot create lanelet predictions");
@@ -759,7 +782,19 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
       const RouteMotionProfile motion_profile =
           buildRouteMotionProfile(lanelet_route, match.start_arc_length, speed, max_lateral_acceleration_mps2_,
                                   max_longitudinal_acceleration_mps2_, max_longitudinal_deceleration_mps2_, stop_at_route_end);
-      if (!motion_profile.feasible && infeasible_hypothesis_probability_ == 0.0) continue;
+      bool feasible = motion_profile.feasible;
+      if (feasible) {
+        const RouteMotionSample first_motion = sampleRouteMotionAtTime(motion_profile.samples, prediction_sample_interval_s_);
+        const perception_msgs::msg::ObjectState first_state = sampleStateOnLaneletRoute(
+            prediction_object.object.state, lanelet_route, match.start_arc_length, first_motion.distance, first_motion.speed,
+            speed, match.lateral_speed, match.reversing, base_time, 0);
+        feasible = initialMotionFeasible(perception_msgs::object_access::getPosition(prediction_object.object),
+                                         perception_msgs::object_access::getVelocityXYZ(prediction_object.object),
+                                         perception_msgs::object_access::getPosition(first_state), prediction_sample_interval_s_,
+                                         max_lateral_acceleration_mps2_, max_longitudinal_acceleration_mps2_,
+                                         max_longitudinal_deceleration_mps2_);
+      }
+      if (!feasible && infeasible_hypothesis_probability_ == 0.0) continue;
       PredictionObject::Hypothesis hypothesis;
       hypothesis.route = lanelet_route;
       hypothesis.start_arc_length = match.start_arc_length;
@@ -767,7 +802,7 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
       hypothesis.initial_lateral_speed = match.lateral_speed;
       hypothesis.reversing = match.reversing;
       hypothesis.stop_at_route_end = stop_at_route_end;
-      hypothesis.feasible = motion_profile.feasible;
+      hypothesis.feasible = feasible;
       hypothesis.motion_profile = motion_profile.samples;
       prediction_object.hypotheses.push_back(std::move(hypothesis));
     }
