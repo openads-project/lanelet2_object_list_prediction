@@ -203,5 +203,37 @@ TEST(RouteSampling, StationaryObjectRetainsItsLateralOffset) {
   EXPECT_NEAR(point.y(), 1.5, 1e-6);
 }
 
+TEST(BicycleMatching, UsesBicycleRulesForDedicatedLane) {
+  lanelet::Lanelet bicycle_lane = makeLaneletWithCenterline(20, {{0.0, 0.0}, {20.0, 0.0}});
+  bicycle_lane.setAttribute(lanelet::AttributeName::Subtype, lanelet::AttributeValueString::BicycleLane);
+  const auto bicycle_rules = lanelet::traffic_rules::TrafficRulesFactory::create(
+      static_cast<const char*>(lanelet::Locations::Germany), static_cast<const char*>(lanelet::Participants::Bicycle));
+  const auto vehicle_rules = lanelet::traffic_rules::TrafficRulesFactory::create(
+      static_cast<const char*>(lanelet::Locations::Germany), static_cast<const char*>(lanelet::Participants::Vehicle));
+
+  EXPECT_TRUE(isBicycleClass(perception_msgs::msg::ObjectClassification::BICYCLE));
+  EXPECT_TRUE(isBicycleClass(perception_msgs::msg::ObjectClassification::MICRO));
+  EXPECT_FALSE(isBicycleClass(perception_msgs::msg::ObjectClassification::MOTORCYCLE));
+  EXPECT_TRUE(isMotorcycleClass(perception_msgs::msg::ObjectClassification::MOTORCYCLE));
+  EXPECT_TRUE(isBicycleLane(bicycle_lane));
+  EXPECT_TRUE(bicycle_rules->canPass(bicycle_lane));
+  EXPECT_FALSE(vehicle_rules->canPass(bicycle_lane));
+}
+
+TEST(ParticipantMatching, UsesPedestrianRulesForSidewalkUsers) {
+  lanelet::Lanelet walkway = makeLaneletWithCenterline(21, {{0.0, 0.0}, {20.0, 0.0}});
+  walkway.setAttribute(lanelet::AttributeName::Subtype, lanelet::AttributeValueString::Walkway);
+  const auto pedestrian_rules = lanelet::traffic_rules::TrafficRulesFactory::create(
+      static_cast<const char*>(lanelet::Locations::Germany), static_cast<const char*>(lanelet::Participants::Pedestrian));
+  const auto vehicle_rules = lanelet::traffic_rules::TrafficRulesFactory::create(
+      static_cast<const char*>(lanelet::Locations::Germany), static_cast<const char*>(lanelet::Participants::Vehicle));
+
+  EXPECT_TRUE(isPedestrianClass(perception_msgs::msg::ObjectClassification::PEDESTRIAN));
+  EXPECT_TRUE(isPedestrianClass(perception_msgs::msg::ObjectClassification::VRU));
+  EXPECT_TRUE(isPedestrianLane(walkway));
+  EXPECT_TRUE(pedestrian_rules->canPass(walkway));
+  EXPECT_FALSE(vehicle_rules->canPass(walkway));
+}
+
 }  // namespace
 }  // namespace lanelet2_object_list_prediction

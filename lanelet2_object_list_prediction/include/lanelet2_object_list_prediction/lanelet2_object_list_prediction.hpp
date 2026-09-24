@@ -40,6 +40,8 @@ struct RouteMotionProfile {
   bool feasible{true};
 };
 
+enum class PredictionParticipant { Vehicle, Bicycle, Pedestrian };
+
 /**
  * @brief Lanelet2ObjectListPrediction class
  */
@@ -56,8 +58,10 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    */
   struct LaneletMatch {
     lanelet::ConstLanelet lanelet;   ///< Matched lanelet in the direction used for routing
+    PredictionParticipant participant{PredictionParticipant::Vehicle};
     double distance;                 ///< Lateral distance from object position to lanelet
                                      ///< geometry in meters
+    double centerline_distance{0.0};  ///< Distance used to rank motorcycle lane matches
     double start_arc_length;         ///< Arc length of the projected object position
                                      ///< along the matched centerline
     double orientation_difference;   ///< Absolute yaw difference between object
@@ -77,6 +81,8 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
 
     struct Hypothesis {
       lanelet::routing::LaneletPath route;
+      PredictionParticipant participant{PredictionParticipant::Vehicle};
+      double match_weight{1.0};
       double start_arc_length{0.0};
       double initial_speed{0.0};
       double initial_lateral_speed{0.0};
@@ -384,10 +390,18 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    */
   lanelet::routing::RoutingGraphUPtr routing_graph_;
 
+  /** Routing graph for bicycles, including bicycle-only lanelets. */
+  lanelet::routing::RoutingGraphUPtr bicycle_routing_graph_;
+  lanelet::routing::RoutingGraphUPtr pedestrian_routing_graph_;
+
   /**
    * @brief Traffic rules used for lanelet matching and routing
    */
   lanelet::traffic_rules::TrafficRulesUPtr traffic_rules_;
+
+  /** Traffic rules used to match bicycles to bicycle-accessible lanelets. */
+  lanelet::traffic_rules::TrafficRulesUPtr bicycle_traffic_rules_;
+  lanelet::traffic_rules::TrafficRulesUPtr pedestrian_traffic_rules_;
 
   /**
    * @brief Map pointer used when the routing graph was built

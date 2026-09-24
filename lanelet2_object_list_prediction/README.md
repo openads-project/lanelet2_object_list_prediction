@@ -8,7 +8,7 @@ Predicts future states of multiple objects based on a Lanelet2 Map
 
 Subscribes to a list of objects in an arbitrary sensor frame, transforms them into the Lanelet2 map frame, and publishes an enriched object list with trajectory predictions attached to each object.
 
-For vehicles and other road users, the node matches each object to the nearest lanelet in the map, queries the routing graph for all reachable paths within the prediction horizon, and samples predicted states at fixed time intervals along each path. Pedestrians are not matched to the road network and receive a constant-velocity prediction instead.
+The node matches objects to nearby lanelets permitted by their participant rules, queries the corresponding routing graph for reachable paths within the prediction horizon, and samples predicted states along each path. Bicycles and micromobility devices use bicycle rules and prefer dedicated bicycle lanes. Pedestrians and sidewalk users (VRU, such as wheelchairs and strollers) use pedestrian rules and prefer walkways, shared walkways, and crosswalks. VRU predictions exclude stairs. Motorcycles consider both vehicle lanes and dedicated bicycle lanes; feasible hypotheses closer to the observed position's lane centerline receive more probability. Objects without a suitable lanelet match use the configured Cartesian fallback.
 
 ```mermaid
 flowchart LR
