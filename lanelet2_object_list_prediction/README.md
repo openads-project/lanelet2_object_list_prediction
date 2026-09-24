@@ -60,7 +60,13 @@ its first predicted displacement would require more acceleration than the config
 
 Right-of-way interactions are evaluated once from the nominal hypotheses of the complete scene. Every route hypothesis can
 cause another object to yield. Yielding predictions brake before the mapped yield line, wait until ego or another predicted
-object has cleared the priority lanelets, and then accelerate within the configured kinematic limits. Missing or stale ego
+object has cleared the priority approach and its conflict with the turning route, plus the configured clearance time,
+and then accelerate within the configured kinematic limits. Ego trajectory segments are interpolated so short priority
+lanelets are detected even when no published sample falls inside them. Reference lines are projected onto the whole route,
+including successors of the lanelet carrying the rule. A branch inherits the yield line only when Lanelet2 reports a
+conflict between the lanelet at the yield line (or its immediate successor) and the priority lanelets or their
+successors; a later crossing on the route does not make this line apply to every branch. An object already on the first successor still observes its predecessor's right-of-way rule until it passes
+the reference line. Missing or stale ego
 data disables ego interaction only; object-to-object interaction remains active.
 
 ## Launch Files

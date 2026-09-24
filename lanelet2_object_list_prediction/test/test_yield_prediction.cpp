@@ -74,9 +74,145 @@ TEST(RightOfWay, ExposesYieldLineAndPriorityLanelets) {
   ASSERT_TRUE(rules.front()->stopLine().has_value());
 }
 
+TEST(RightOfWay, ProjectsReferenceLineBeyondRegulatingLanelet) {
+  lanelet::Lanelet approach = makeStraightLanelet(20);
+  lanelet::LineString3d left(lanelet::utils::getId(),
+                             {approach.leftBound().back(), lanelet::Point3d(lanelet::utils::getId(), 40.0, 1.0, 0.0)});
+  lanelet::LineString3d right(lanelet::utils::getId(),
+                              {approach.rightBound().back(), lanelet::Point3d(lanelet::utils::getId(), 40.0, -1.0, 0.0)});
+  lanelet::Lanelet successor(21, left, right);
+  const lanelet::routing::LaneletPath full_route({approach, successor});
+  const lanelet::routing::LaneletPath successor_route({successor});
+  lanelet::LineString3d reference_line(lanelet::utils::getId(), {lanelet::Point3d(lanelet::utils::getId(), 25.0, -1.0, 0.0),
+                                                                 lanelet::Point3d(lanelet::utils::getId(), 25.0, 1.0, 0.0)});
+
+  const auto from_approach = projectYieldLineOnRoute(full_route, 0.0, 0, reference_line);
+  ASSERT_TRUE(from_approach.has_value());
+  EXPECT_EQ(from_approach->lanelet_index, 1U);
+  EXPECT_NEAR(from_approach->distance, 25.0, 1e-6);
+  const RouteMotionProfile nominal = buildRouteMotionProfile(full_route, 0.0, 4.0, 2.5, 1.0, 2.0, false);
+  const double stop_distance = from_approach->distance - 2.5;
+  const double successor_end = routeDistanceAtLaneletStart(full_route, 0.0, from_approach->lanelet_index) +
+                               static_cast<double>(lanelet::geometry::length(successor.centerline2d()));
+  const TimeInterval yielding_interval{timeAtRouteDistance(nominal.samples, stop_distance),
+                                       timeAtRouteDistance(nominal.samples, successor_end)};
+  EXPECT_TRUE(intervalsOverlap(yielding_interval, TimeInterval{6.0, 7.0}));
+
+  const auto from_successor = projectYieldLineOnRoute(successor_route, 2.0, 0, reference_line);
+  ASSERT_TRUE(from_successor.has_value());
+  EXPECT_NEAR(from_successor->distance, 3.0, 1e-6);
+  EXPECT_FALSE(projectYieldLineOnRoute(successor_route, 7.0, 0, reference_line).has_value());
+}
+
+TEST(RightOfWay, FindsRegulatedPredecessorForSuccessorRoute) {
+  lanelet::Lanelet approach = makeStraightLanelet(22);
+  lanelet::LineString3d left(lanelet::utils::getId(),
+                             {approach.leftBound().back(), lanelet::Point3d(lanelet::utils::getId(), 40.0, 1.0, 0.0)});
+  lanelet::LineString3d right(lanelet::utils::getId(),
+                              {approach.rightBound().back(), lanelet::Point3d(lanelet::utils::getId(), 40.0, -1.0, 0.0)});
+  lanelet::Lanelet successor(23, left, right);
+  lanelet::Lanelet priority = makeStraightLanelet(24, 4.0);
+  lanelet::LineString3d reference_line(lanelet::utils::getId(), {lanelet::Point3d(lanelet::utils::getId(), 25.0, -1.0, 0.0),
+                                                                 lanelet::Point3d(lanelet::utils::getId(), 25.0, 1.0, 0.0)});
+  lanelet::AttributeMap attributes;
+  attributes[lanelet::AttributeName::Type] = lanelet::AttributeValueString::RegulatoryElement;
+  attributes[lanelet::AttributeName::Subtype] = lanelet::RightOfWay::RuleName;
+  approach.addRegulatoryElement(
+      lanelet::RightOfWay::make(lanelet::utils::getId(), attributes, {priority}, {approach}, reference_line));
+  lanelet::LaneletMap map;
+  map.add(approach);
+  map.add(successor);
+  map.add(priority);
+  const auto traffic_rules = lanelet::traffic_rules::TrafficRulesFactory::create(
+      static_cast<const char*>(lanelet::Locations::Germany), static_cast<const char*>(lanelet::Participants::Vehicle));
+  const auto graph = lanelet::routing::RoutingGraph::build(map, *traffic_rules);
+  const auto predecessors = graph->previous(successor);
+  ASSERT_EQ(predecessors.size(), 1U);
+  EXPECT_EQ(predecessors.front().id(), approach.id());
+  EXPECT_EQ(predecessors.front().regulatoryElementsAs<lanelet::RightOfWay>().size(), 1U);
+}
+
+TEST(RightOfWay, SharedApproachOnlyAppliesToConflictingBranch) {
+  auto point = [](double x, double y) { return lanelet::Point3d(lanelet::utils::getId(), x, y, 0.0); };
+  const auto approach_left_start = point(0.0, 1.0);
+  const auto approach_right_start = point(0.0, -1.0);
+  const auto approach_left_end = point(10.0, 1.0);
+  const auto approach_right_end = point(10.0, -1.0);
+  lanelet::Lanelet approach(40, lanelet::LineString3d(lanelet::utils::getId(), {approach_left_start, approach_left_end}),
+                            lanelet::LineString3d(lanelet::utils::getId(), {approach_right_start, approach_right_end}));
+  lanelet::Lanelet straight(41, lanelet::LineString3d(lanelet::utils::getId(), {approach_left_end, point(20.0, 1.0)}),
+                            lanelet::LineString3d(lanelet::utils::getId(), {approach_right_end, point(20.0, -1.0)}));
+  lanelet::Lanelet turning(42, lanelet::LineString3d(lanelet::utils::getId(), {approach_left_end, point(20.0, 11.0)}),
+                           lanelet::LineString3d(lanelet::utils::getId(), {approach_right_end, point(20.0, 9.0)}));
+  lanelet::Lanelet later_crossing(
+      45, lanelet::LineString3d(lanelet::utils::getId(), {straight.leftBound().back(), point(10.0, 11.0)}),
+      lanelet::LineString3d(lanelet::utils::getId(), {straight.rightBound().back(), point(10.0, 9.0)}));
+  const auto priority_left_start = point(16.0, 20.0);
+  const auto priority_right_start = point(14.0, 20.0);
+  const auto priority_left_end = point(16.0, 10.0);
+  const auto priority_right_end = point(14.0, 10.0);
+  lanelet::Lanelet priority_approach(43, lanelet::LineString3d(lanelet::utils::getId(), {priority_left_start, priority_left_end}),
+                                     lanelet::LineString3d(lanelet::utils::getId(), {priority_right_start, priority_right_end}));
+  lanelet::Lanelet priority_crossing(44, lanelet::LineString3d(lanelet::utils::getId(), {priority_left_end, point(16.0, 2.0)}),
+                                     lanelet::LineString3d(lanelet::utils::getId(), {priority_right_end, point(14.0, 2.0)}));
+  lanelet::AttributeMap attributes;
+  attributes[lanelet::AttributeName::Type] = lanelet::AttributeValueString::RegulatoryElement;
+  attributes[lanelet::AttributeName::Subtype] = lanelet::RightOfWay::RuleName;
+  const lanelet::LineString3d stop_line(lanelet::utils::getId(), {point(11.0, -1.0), point(11.0, 1.0)});
+  const auto rule = lanelet::RightOfWay::make(lanelet::utils::getId(), attributes, {priority_approach}, {approach}, stop_line);
+  approach.addRegulatoryElement(rule);
+  priority_approach.addRegulatoryElement(rule);
+  lanelet::LaneletMap map;
+  for (const auto& lanelet : {approach, straight, turning, later_crossing, priority_approach, priority_crossing})
+    map.add(lanelet);
+  const auto traffic_rules = lanelet::traffic_rules::TrafficRulesFactory::create(
+      static_cast<const char*>(lanelet::Locations::Germany), static_cast<const char*>(lanelet::Participants::Vehicle));
+  const auto graph = lanelet::routing::RoutingGraph::build(map, *traffic_rules);
+
+  ASSERT_EQ(graph->following(priority_approach).size(), 1U);
+  EXPECT_EQ(graph->following(priority_approach).front().id(), priority_crossing.id());
+  EXPECT_FALSE(laneletConflictsWithPriorityContinuation(straight, *rule, *graph));
+  EXPECT_TRUE(laneletConflictsWithPriorityContinuation(turning, *rule, *graph));
+  EXPECT_TRUE(laneletConflictsWithPriorityContinuation(later_crossing, *rule, *graph));
+  const lanelet::routing::LaneletPath straight_route({approach, straight, later_crossing});
+  const lanelet::routing::LaneletPath turning_route({approach, turning});
+  EXPECT_FALSE(conflictLaneletAtYieldLine(straight_route, 0, 1, *rule, *graph).has_value());
+  EXPECT_EQ(conflictLaneletAtYieldLine(turning_route, 0, 1, *rule, *graph), 1U);
+}
+
 TEST(YieldInteraction, DetectsOnlyOverlappingOccupancyIntervals) {
   EXPECT_TRUE(intervalsOverlap(TimeInterval{1.0, 3.0}, TimeInterval{2.0, 4.0}));
   EXPECT_FALSE(intervalsOverlap(TimeInterval{1.0, 2.0}, TimeInterval{2.1, 4.0}));
+}
+
+TEST(YieldInteraction, InterpolatesEgoAcrossShortPriorityLaneletAndKeepsConflictOccupied) {
+  auto makeLanelet = [](lanelet::Id id, double start, double end) {
+    lanelet::LineString3d left(lanelet::utils::getId(), {lanelet::Point3d(lanelet::utils::getId(), start, 1.0, 0.0),
+                                                         lanelet::Point3d(lanelet::utils::getId(), end, 1.0, 0.0)});
+    lanelet::LineString3d right(lanelet::utils::getId(), {lanelet::Point3d(lanelet::utils::getId(), start, -1.0, 0.0),
+                                                          lanelet::Point3d(lanelet::utils::getId(), end, -1.0, 0.0)});
+    return lanelet::Lanelet(id, left, right);
+  };
+  const lanelet::Lanelet priority = makeLanelet(30, 0.0, 1.0);
+  const lanelet::Lanelet conflict = makeLanelet(31, 3.0, 5.0);
+  perception_msgs::msg::EgoData ego;
+  ego.state.header.stamp.sec = 0;
+  ego.state.model_id = 1;
+  ego.state.continuous_state.resize(13);
+  ego.state.continuous_state[0] = -1.0;
+  perception_msgs::msg::ObjectState future;
+  future.header.stamp.sec = 7;
+  future.model_id = 1;
+  future.continuous_state.resize(13);
+  future.continuous_state[0] = 6.0;
+  ego.trajectory_planned.push_back(future);
+
+  const auto occupancy = egoRouteOccupancy(ego, rclcpp::Time(0, 0, RCL_ROS_TIME), 7.0, {priority}, conflict);
+  ASSERT_TRUE(occupancy.has_value());
+  EXPECT_NEAR(occupancy->entry, 1.0, 0.25);
+  EXPECT_NEAR(occupancy->exit, 6.0, 0.25);
+  EXPECT_TRUE(conflictsDuringClearance(TimeInterval{6.5, 7.0}, *occupancy, 1.0));
+  EXPECT_FALSE(conflictsDuringClearance(TimeInterval{7.5, 8.0}, *occupancy, 1.0));
 }
 
 TEST(YieldInteraction, AcceptsSmallTimestampOffsetsInEitherDirection) {

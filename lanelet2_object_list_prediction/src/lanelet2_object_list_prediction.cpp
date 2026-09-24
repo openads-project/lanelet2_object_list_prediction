@@ -345,8 +345,137 @@ double routeDistanceAtLaneletStart(const lanelet::routing::LaneletPath& route,
   return distance;
 }
 
+struct YieldLineProjection {
+  double distance{0.0};
+  std::size_t lanelet_index{0};
+};
+
+std::optional<YieldLineProjection> projectYieldLineOnRoute(const lanelet::routing::LaneletPath& route,
+                                                           double start_arc_length,
+                                                           std::size_t first_lanelet_index,
+                                                           const lanelet::ConstLineString3d& stop_line) {
+  if (stop_line.empty()) return std::nullopt;
+  lanelet::BasicPoint2d line_center(0.0, 0.0);
+  for (const lanelet::ConstPoint3d& point : stop_line) {
+    line_center += lanelet::BasicPoint2d(point.x(), point.y());
+  }
+  line_center /= static_cast<double>(stop_line.size());
+
+  double nearest_distance = std::numeric_limits<double>::infinity();
+  std::optional<YieldLineProjection> nearest;
+  for (std::size_t index = first_lanelet_index; index < route.size(); ++index) {
+    const lanelet::ConstLineString2d centerline = route[index].centerline2d();
+    const double length = static_cast<double>(lanelet::geometry::length(centerline));
+    const double arc = std::clamp(lanelet::geometry::toArcCoordinates(centerline, line_center).length, 0.0, length);
+    const lanelet::BasicPoint2d route_point = lanelet::geometry::interpolatedPointAtDistance(centerline, arc);
+    const double distance = (route_point - line_center).norm();
+    if (distance < nearest_distance) {
+      nearest_distance = distance;
+      nearest = YieldLineProjection{routeDistanceAtLaneletStart(route, start_arc_length, index) + arc, index};
+    }
+  }
+  // A reference line beyond this route belongs to a different branch or is
+  // not reached by the hypothesis. A line behind the object has been passed.
+  if (!nearest.has_value() || nearest_distance > 5.0 || nearest->distance < -kKinematicEpsilon) return std::nullopt;
+  return nearest;
+}
+
+bool laneletConflictsWithPriorityContinuation(const lanelet::ConstLanelet& route_lanelet,
+                                              const lanelet::RightOfWay& right_of_way,
+                                              const lanelet::routing::RoutingGraph& routing_graph) {
+  std::unordered_set<lanelet::Id> priority_path_ids;
+  for (const lanelet::ConstLanelet& priority_lanelet : right_of_way.rightOfWayLanelets()) {
+    priority_path_ids.insert(priority_lanelet.id());
+    for (const lanelet::ConstLanelet& following : routing_graph.following(priority_lanelet)) {
+      priority_path_ids.insert(following.id());
+    }
+  }
+  const auto conflicts = routing_graph.conflicting(route_lanelet);
+  return std::any_of(conflicts.begin(), conflicts.end(), [&](const lanelet::ConstLaneletOrArea& conflict) {
+    return conflict.isLanelet() && priority_path_ids.count(conflict.id()) > 0;
+  });
+}
+
+std::optional<std::size_t> conflictLaneletAtYieldLine(const lanelet::routing::LaneletPath& route,
+                                                      std::size_t regulating_lanelet_index,
+                                                      std::size_t line_lanelet_index,
+                                                      const lanelet::RightOfWay& right_of_way,
+                                                      const lanelet::routing::RoutingGraph& routing_graph) {
+  if (laneletConflictsWithPriorityContinuation(route[line_lanelet_index], right_of_way, routing_graph)) {
+    return line_lanelet_index;
+  }
+  // The line can lie on a shared approach, before the route branches.
+  if (line_lanelet_index == regulating_lanelet_index && line_lanelet_index + 1 < route.size() &&
+      laneletConflictsWithPriorityContinuation(route[line_lanelet_index + 1], right_of_way, routing_graph)) {
+    return line_lanelet_index + 1;
+  }
+  return std::nullopt;
+}
+
 bool intervalsOverlap(const TimeInterval& lhs, const TimeInterval& rhs) {
   return lhs.entry <= rhs.exit + kKinematicEpsilon && rhs.entry <= lhs.exit + kKinematicEpsilon;
+}
+
+bool conflictsDuringClearance(const TimeInterval& yielding, const TimeInterval& priority, double clearance_time) {
+  return intervalsOverlap(yielding, TimeInterval{priority.entry, priority.exit + clearance_time});
+}
+
+std::optional<TimeInterval> egoRouteOccupancy(const perception_msgs::msg::EgoData& ego_data,
+                                              const rclcpp::Time& base_stamp,
+                                              double horizon,
+                                              const std::vector<lanelet::ConstLanelet>& priority_lanelets,
+                                              const lanelet::ConstLanelet& conflict_lanelet) {
+  struct TimedPosition {
+    double time;
+    lanelet::BasicPoint2d position;
+  };
+  std::vector<TimedPosition> positions;
+  auto append = [&](const perception_msgs::msg::ObjectState& state) {
+    try {
+      const geometry_msgs::msg::Point point = perception_msgs::object_access::getPosition(state);
+      const double time = (rclcpp::Time(state.header.stamp) - base_stamp).seconds();
+      if (std::isfinite(time) && std::isfinite(point.x) && std::isfinite(point.y)) {
+        positions.push_back({time, lanelet::BasicPoint2d(point.x, point.y)});
+      }
+    } catch (const std::exception&) {
+    }
+  };
+  append(ego_data.state);
+  for (const auto& state : ego_data.trajectory_planned) append(state);
+  std::sort(positions.begin(), positions.end(), [](const auto& lhs, const auto& rhs) { return lhs.time < rhs.time; });
+
+  std::optional<TimeInterval> priority_interval;
+  std::optional<TimeInterval> conflict_interval;
+  auto include = [](std::optional<TimeInterval>& interval, double time) {
+    if (!interval) interval = TimeInterval{time, time};
+    interval->entry = std::min(interval->entry, time);
+    interval->exit = std::max(interval->exit, time);
+  };
+  auto evaluate = [&](double time, const lanelet::BasicPoint2d& point) {
+    if (time < -kKinematicEpsilon || time > horizon + kKinematicEpsilon) return;
+    if (std::any_of(priority_lanelets.begin(), priority_lanelets.end(),
+                    [&](const auto& lanelet) { return lanelet::geometry::inside(lanelet, point); })) {
+      include(priority_interval, time);
+    }
+    if (lanelet::geometry::inside(conflict_lanelet, point)) include(conflict_interval, time);
+  };
+  for (std::size_t index = 0; index < positions.size(); ++index) {
+    evaluate(positions[index].time, positions[index].position);
+    if (index + 1 == positions.size()) continue;
+    const auto& from = positions[index];
+    const auto& to = positions[index + 1];
+    const double distance = (to.position - from.position).norm();
+    const std::size_t steps = std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(distance / kRouteProfileResolutionM)));
+    for (std::size_t step = 1; step < steps; ++step) {
+      const double fraction = static_cast<double>(step) / static_cast<double>(steps);
+      evaluate(from.time + fraction * (to.time - from.time), from.position + fraction * (to.position - from.position));
+    }
+  }
+  if (!priority_interval) return std::nullopt;
+  if (conflict_interval && conflict_interval->exit >= priority_interval->entry) {
+    priority_interval->exit = std::max(priority_interval->exit, conflict_interval->exit);
+  }
+  return priority_interval;
 }
 
 bool isEgoDataTimestampUsable(double ego_age, double timeout) { return std::abs(ego_age) <= timeout + kKinematicEpsilon; }
@@ -860,52 +989,37 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
 
   const rclcpp::Time base_stamp(base_time);
 
-  auto routeOccupancy = [](const PredictionObject::Hypothesis& hypothesis,
-                           const std::unordered_set<lanelet::Id>& lanelet_ids) -> std::optional<TimeInterval> {
+  auto routeOccupancy = [](const PredictionObject::Hypothesis& hypothesis, const std::unordered_set<lanelet::Id>& lanelet_ids,
+                           const lanelet::ConstLanelet& conflict_lanelet) -> std::optional<TimeInterval> {
     double entry_distance = std::numeric_limits<double>::infinity();
     double exit_distance = -std::numeric_limits<double>::infinity();
     for (std::size_t route_index = 0; route_index < hypothesis.route.size(); ++route_index) {
-      if (lanelet_ids.count(hypothesis.route[route_index].id()) == 0) continue;
+      const lanelet::ConstLanelet& route_lanelet = hypothesis.route[route_index];
       const double lanelet_start = routeDistanceAtLaneletStart(hypothesis.route, hypothesis.start_arc_length, route_index);
-      const double lanelet_length = static_cast<double>(lanelet::geometry::length(hypothesis.route[route_index].centerline2d()));
-      entry_distance = std::min(entry_distance, std::max(0.0, lanelet_start));
-      exit_distance = std::max(exit_distance, lanelet_start + lanelet_length);
+      const double lanelet_length = static_cast<double>(lanelet::geometry::length(route_lanelet.centerline2d()));
+      if (lanelet_ids.count(route_lanelet.id()) > 0) {
+        entry_distance = std::min(entry_distance, std::max(0.0, lanelet_start));
+        exit_distance = std::max(exit_distance, lanelet_start + lanelet_length);
+      }
     }
     if (!std::isfinite(entry_distance) || exit_distance < 0.0) return std::nullopt;
+    // A priority lanelet can be only the approach to the crossing. Keep the
+    // participant present until its nominal route leaves the conflict lanelet.
+    for (std::size_t route_index = 0; route_index < hypothesis.route.size(); ++route_index) {
+      const lanelet::ConstLanelet& route_lanelet = hypothesis.route[route_index];
+      const double lanelet_start = routeDistanceAtLaneletStart(hypothesis.route, hypothesis.start_arc_length, route_index);
+      if (lanelet_start + kKinematicEpsilon < entry_distance) continue;
+      // Polygon overlap is symmetric; the two route roles have no argument order.
+      // NOLINTNEXTLINE(readability-suspicious-call-argument)
+      if (lanelet::geometry::overlaps2d(route_lanelet, conflict_lanelet)) {
+        exit_distance =
+            std::max(exit_distance, lanelet_start + static_cast<double>(lanelet::geometry::length(route_lanelet.centerline2d())));
+      }
+    }
     const TimeInterval interval{timeAtRouteDistance(hypothesis.motion_profile, entry_distance),
                                 timeAtRouteDistance(hypothesis.motion_profile, exit_distance)};
     if (!std::isfinite(interval.entry)) return std::nullopt;
-    return interval;
-  };
 
-  auto egoOccupancy = [&](const std::unordered_set<lanelet::Id>& lanelet_ids) -> std::optional<TimeInterval> {
-    if (!ego_data.has_value()) return std::nullopt;
-    std::optional<TimeInterval> interval;
-    for (const perception_msgs::msg::ObjectState& state : ego_data->trajectory_planned) {
-      geometry_msgs::msg::Point position;
-      try {
-        position = perception_msgs::object_access::getPosition(state);
-      } catch (const std::exception&) {
-        continue;
-      }
-      const double time = (rclcpp::Time(state.header.stamp) - base_stamp).seconds();
-      if (time < -kKinematicEpsilon || time > prediction_horizon_s_ + kKinematicEpsilon) continue;
-      const auto candidates = lanelet::geometry::findWithin2d(map->laneletLayer, lanelet::BasicPoint2d(position.x, position.y),
-                                                              lanelet_match_max_distance_m_);
-      const bool on_priority_lanelet = std::any_of(candidates.begin(), candidates.end(), [&lanelet_ids](const auto& candidate) {
-        return lanelet_ids.count(candidate.second.id()) > 0;
-      });
-      if (!on_priority_lanelet) continue;
-      if (!interval.has_value()) {
-        interval = TimeInterval{time, time};
-      } else {
-        interval->entry = std::min(interval->entry, time);
-        interval->exit = std::max(interval->exit, time);
-      }
-    }
-    if (interval.has_value() && interval->exit <= interval->entry + kKinematicEpsilon) {
-      interval->exit = std::min(prediction_horizon_s_, interval->exit + prediction_sample_interval_s_);
-    }
     return interval;
   };
 
@@ -932,43 +1046,60 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
       const PredictionObject::Hypothesis& hypothesis = prediction_object.hypotheses[hypothesis_index];
       if (hypothesis.reversing) continue;
       std::optional<YieldConstraint> selected_constraint;
-      for (std::size_t route_index = 0; route_index < hypothesis.route.size(); ++route_index) {
-        const lanelet::ConstLanelet& route_lanelet = hypothesis.route[route_index];
-        for (const auto& right_of_way : route_lanelet.regulatoryElementsAs<lanelet::RightOfWay>()) {
-          if (right_of_way->getManeuver(route_lanelet) != lanelet::ManeuverType::Yield) continue;
+      auto evaluateRule = [&](const lanelet::ConstLanelet& regulating_lanelet, std::size_t route_index,
+                              bool regulating_lanelet_on_route) {
+        for (const auto& right_of_way : regulating_lanelet.regulatoryElementsAs<lanelet::RightOfWay>()) {
+          if (right_of_way->getManeuver(regulating_lanelet) != lanelet::ManeuverType::Yield) continue;
 
           std::unordered_set<lanelet::Id> priority_lanelet_ids;
           for (const lanelet::ConstLanelet& priority_lanelet : right_of_way->rightOfWayLanelets()) {
             priority_lanelet_ids.insert(priority_lanelet.id());
           }
-          if (priority_lanelet_ids.empty()) continue;
+          if (priority_lanelet_ids.empty() || routing_graph_ == nullptr) continue;
 
-          const double lanelet_start = routeDistanceAtLaneletStart(hypothesis.route, hypothesis.start_arc_length, route_index);
-          const double lanelet_length = static_cast<double>(lanelet::geometry::length(route_lanelet.centerline2d()));
-          double yield_line_distance = lanelet_start + lanelet_length;
+          double yield_line_distance = 0.0;
+          std::size_t interval_end_index = route_index;
           const auto stop_line = right_of_way->stopLine();
           if (stop_line.has_value() && !stop_line->empty()) {
-            double center_x = 0.0;
-            double center_y = 0.0;
-            for (const lanelet::ConstPoint3d& point : *stop_line) {
-              center_x += point.x();
-              center_y += point.y();
-            }
-            center_x /= static_cast<double>(stop_line->size());
-            center_y /= static_cast<double>(stop_line->size());
-            const double stop_arc_length =
-                lanelet::geometry::toArcCoordinates(route_lanelet.centerline2d(), lanelet::BasicPoint2d(center_x, center_y))
-                    .length;
-            yield_line_distance = lanelet_start + std::clamp(stop_arc_length, 0.0, lanelet_length);
+            const auto projection =
+                projectYieldLineOnRoute(hypothesis.route, hypothesis.start_arc_length, route_index, *stop_line);
+            if (!projection.has_value()) continue;
+            yield_line_distance = projection->distance;
+            interval_end_index = projection->lanelet_index;
+          } else {
+            // Without a mapped line, the end of the regulating lanelet is the
+            // stop position. A predecessor already lies behind this route.
+            if (!regulating_lanelet_on_route) continue;
+            const double lanelet_start = routeDistanceAtLaneletStart(hypothesis.route, hypothesis.start_arc_length, route_index);
+            const double lanelet_length = static_cast<double>(lanelet::geometry::length(regulating_lanelet.centerline2d()));
+            yield_line_distance = lanelet_start + lanelet_length;
           }
+
+          if (yield_line_distance < -kKinematicEpsilon) continue;
+          const std::optional<std::size_t> conflict_index =
+              conflictLaneletAtYieldLine(hypothesis.route, route_index, interval_end_index, *right_of_way, *routing_graph_);
+          if (!conflict_index) continue;
+          interval_end_index = std::max(interval_end_index, *conflict_index);
+
           const double stop_distance = std::max(0.0, yield_line_distance - front_offset);
+          const double interval_end =
+              routeDistanceAtLaneletStart(hypothesis.route, hypothesis.start_arc_length, interval_end_index) +
+              static_cast<double>(lanelet::geometry::length(hypothesis.route[interval_end_index].centerline2d()));
           const TimeInterval yielding_interval{timeAtRouteDistance(hypothesis.motion_profile, stop_distance),
-                                               timeAtRouteDistance(hypothesis.motion_profile, lanelet_start + lanelet_length)};
+                                               timeAtRouteDistance(hypothesis.motion_profile, interval_end)};
           if (!std::isfinite(yielding_interval.entry)) continue;
 
           double latest_clearance = -std::numeric_limits<double>::infinity();
-          const std::optional<TimeInterval> ego_interval = egoOccupancy(priority_lanelet_ids);
-          if (ego_interval.has_value() && intervalsOverlap(yielding_interval, *ego_interval)) {
+          std::vector<lanelet::ConstLanelet> priority_lanelets;
+          priority_lanelets.reserve(priority_lanelet_ids.size());
+          for (const lanelet::ConstLanelet& priority_lanelet : right_of_way->rightOfWayLanelets()) {
+            priority_lanelets.push_back(priority_lanelet);
+          }
+          const lanelet::ConstLanelet& conflict_lanelet = hypothesis.route[*conflict_index];
+          const std::optional<TimeInterval> ego_interval =
+              ego_data ? egoRouteOccupancy(*ego_data, base_stamp, prediction_horizon_s_, priority_lanelets, conflict_lanelet)
+                       : std::nullopt;
+          if (ego_interval.has_value() && conflictsDuringClearance(yielding_interval, *ego_interval, yield_clearance_time_s_)) {
             latest_clearance =
                 std::max(latest_clearance, std::isfinite(ego_interval->exit) ? ego_interval->exit : prediction_horizon_s_);
           }
@@ -977,8 +1108,10 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
                ++priority_object_index) {
             if (priority_object_index == object_index) continue;
             for (const PredictionObject::Hypothesis& priority_hypothesis : prediction_objects[priority_object_index].hypotheses) {
-              const std::optional<TimeInterval> priority_interval = routeOccupancy(priority_hypothesis, priority_lanelet_ids);
-              if (priority_interval.has_value() && intervalsOverlap(yielding_interval, *priority_interval)) {
+              const std::optional<TimeInterval> priority_interval =
+                  routeOccupancy(priority_hypothesis, priority_lanelet_ids, conflict_lanelet);
+              if (priority_interval.has_value() &&
+                  conflictsDuringClearance(yielding_interval, *priority_interval, yield_clearance_time_s_)) {
                 latest_clearance = std::max(
                     latest_clearance, std::isfinite(priority_interval->exit) ? priority_interval->exit : prediction_horizon_s_);
               }
@@ -994,6 +1127,17 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
               selected_constraint->release_time = std::max(selected_constraint->release_time, constraint.release_time);
             }
           }
+        }
+      };
+
+      for (std::size_t route_index = 0; route_index < hypothesis.route.size(); ++route_index) {
+        evaluateRule(hypothesis.route[route_index], route_index, true);
+      }
+      // The vehicle may already be on the first successor of a regulated
+      // lanelet while the reference line is still ahead of it.
+      if (routing_graph_ != nullptr && !hypothesis.route.empty()) {
+        for (const lanelet::ConstLanelet& predecessor : routing_graph_->previous(hypothesis.route.front())) {
+          evaluateRule(predecessor, 0, false);
         }
       }
 
