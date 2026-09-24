@@ -218,6 +218,8 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @param travel_distance distance to travel along the route from the current
    * position
    * @param speed longitudinal speed at the sampled position
+   * @param initial_speed observed longitudinal speed used to determine the
+   * centerline convergence distance
    * @param base_time time stamp of the input object list
    * @param sample_index zero-based prediction sample index
    * @return predicted object state at the requested sample
@@ -227,6 +229,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
                                                               double start_arc_length,
                                                               double travel_distance,
                                                               double speed,
+                                                              double initial_speed,
                                                               const builtin_interfaces::msg::Time& base_time,
                                                               std::size_t sample_index) const;
 
@@ -324,12 +327,6 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Sampling interval of predicted states in seconds (parameter)
    */
   double prediction_sample_interval_s_ = 0.5;
-
-  /**
-   * @brief Distance over which a map-based prediction converges from its
-   * observed lateral position to the lanelet centerline (parameter)
-   */
-  double centerline_convergence_distance_m_ = 10.0;
 
   /**
    * @brief Maximum lateral acceleration used to limit speed on curved map paths

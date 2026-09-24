@@ -114,22 +114,30 @@ TEST(RouteSampling, SmoothlyConvergesInitialLateralOffset) {
   const lanelet::routing::LaneletPath route({straight});
   const double route_length = remainingRouteLength(route, 0.0);
 
-  const lanelet::BasicPoint2d initial = pointOnConvergingRoute(route, 0.0, route_length, 0.0, 1.5, 10.0);
-  const lanelet::BasicPoint2d halfway = pointOnConvergingRoute(route, 0.0, route_length, 5.0, 1.5, 10.0);
-  const lanelet::BasicPoint2d converged = pointOnConvergingRoute(route, 0.0, route_length, 10.0, 1.5, 10.0);
+  const double convergence_distance = lateralConvergenceDistance(1.5, 10.0, 9.0);
+  const lanelet::BasicPoint2d initial = pointOnConvergingRoute(route, 0.0, route_length, 0.0, 1.5, convergence_distance);
+  const lanelet::BasicPoint2d halfway = pointOnConvergingRoute(route, 0.0, route_length, 5.0, 1.5, convergence_distance);
+  const lanelet::BasicPoint2d converged = pointOnConvergingRoute(route, 0.0, route_length, 10.0, 1.5, convergence_distance);
+  EXPECT_NEAR(convergence_distance, 10.0, 1e-6);
   EXPECT_NEAR(initial.y(), 1.5, 1e-6);
   EXPECT_NEAR(halfway.y(), 0.75, 1e-6);
   EXPECT_NEAR(converged.y(), 0.0, 1e-6);
-  EXPECT_LT(convergingRouteYaw(route, 0.0, route_length, 5.0, 1.5, 10.0), 0.0);
+  EXPECT_LT(convergingRouteYaw(route, 0.0, route_length, 5.0, 1.5, convergence_distance), 0.0);
 }
 
-TEST(RouteSampling, ZeroConvergenceDistanceSnapsToCenterline) {
+TEST(RouteSampling, MoreLateralAccelerationConvergesSooner) {
+  EXPECT_LT(lateralConvergenceDistance(1.5, 10.0, 9.0), lateralConvergenceDistance(1.5, 10.0, 2.25));
+}
+
+TEST(RouteSampling, StationaryObjectRetainsItsLateralOffset) {
   lanelet::Lanelet straight = makeLaneletWithCenterline(8, {{0.0, 0.0}, {20.0, 0.0}});
   const lanelet::routing::LaneletPath route({straight});
   const double route_length = remainingRouteLength(route, 0.0);
+  const double convergence_distance = lateralConvergenceDistance(1.5, 0.0, 2.5);
 
-  const lanelet::BasicPoint2d point = pointOnConvergingRoute(route, 0.0, route_length, 0.0, 1.5, 0.0);
-  EXPECT_NEAR(point.y(), 0.0, 1e-6);
+  const lanelet::BasicPoint2d point = pointOnConvergingRoute(route, 0.0, route_length, 0.0, 1.5, convergence_distance);
+  EXPECT_TRUE(std::isinf(convergence_distance));
+  EXPECT_NEAR(point.y(), 1.5, 1e-6);
 }
 
 }  // namespace
