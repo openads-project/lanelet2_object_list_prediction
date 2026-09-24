@@ -14,6 +14,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <lanelet2_map_interface/lanelet2_map_interface.hpp>
+#include <perception_msgs/msg/ego_data.hpp>
 #include <perception_msgs/msg/object_list.hpp>
 #include <rclcpp/rclcpp.hpp>
 
@@ -25,6 +26,19 @@ template <typename T, typename A>
 struct is_vector<std::vector<T, A>> : std::true_type {};
 template <typename C>
 inline constexpr bool is_vector_v = is_vector<C>::value;
+
+/** One sample of a route-relative longitudinal motion profile. */
+struct RouteMotionSample {
+  double distance{0.0};
+  double speed{0.0};
+  double time{0.0};
+};
+
+/** Motion profile and its combined kinematic feasibility. */
+struct RouteMotionProfile {
+  std::vector<RouteMotionSample> samples;
+  bool feasible{true};
+};
 
 /**
  * @brief Lanelet2ObjectListPrediction class
@@ -42,9 +56,12 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    */
   struct LaneletMatch {
     lanelet::ConstLanelet lanelet;  ///< Matched lanelet in the direction used for routing
-    double distance;                ///< Lateral distance from object position to lanelet geometry in meters
-    double start_arc_length;        ///< Arc length of the projected object position along the matched centerline
-    double orientation_difference;  ///< Absolute yaw difference between object heading and lanelet direction in radians
+    double distance;                ///< Lateral distance from object position to lanelet
+                                    ///< geometry in meters
+    double start_arc_length;        ///< Arc length of the projected object position
+                                    ///< along the matched centerline
+    double orientation_difference;  ///< Absolute yaw difference between object
+                                    ///< heading and lanelet direction in radians
   };
 
   /**
@@ -52,7 +69,21 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    */
   struct PredictionObject {
     perception_msgs::msg::Object object;        ///< Object in map frame, later enriched with state predictions
-    std::vector<LaneletMatch> lanelet_matches;  ///< Lanelet candidates accepted for map-based prediction
+    std::vector<LaneletMatch> lanelet_matches;  ///< Lanelet candidates accepted
+                                                ///< for map-based prediction
+
+    struct Hypothesis {
+      lanelet::routing::LaneletPath route;
+      double start_arc_length{0.0};
+      double initial_speed{0.0};
+      bool stop_at_route_end{false};
+      bool feasible{true};
+      std::vector<RouteMotionSample> motion_profile;
+      perception_msgs::msg::ObjectStatePrediction prediction;
+    };
+
+    std::vector<Hypothesis> hypotheses;  ///< Map-based hypotheses retained for
+                                         ///< scene-level interaction processing
   };
 
   /**
@@ -61,7 +92,8 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @param name name
    * @param param parameter variable to load into
    * @param description description
-   * @param add_to_auto_reconfigurable_params enable reconfiguration of parameter
+   * @param add_to_auto_reconfigurable_params enable reconfiguration of
+   * parameter
    * @param is_required whether failure to load parameter will stop node
    * @param read_only set parameter to read-only
    * @param from_value parameter range minimum
@@ -109,11 +141,16 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    */
   void objectListCallback(const perception_msgs::msg::ObjectList::ConstSharedPtr& msg);
 
+  /** Stores the latest ego state and planned trajectory for interaction
+   * prediction. */
+  void egoDataCallback(const perception_msgs::msg::EgoData::ConstSharedPtr& msg);
+
   /**
    * @brief Match all objects in an object list to lanelets in the current map
    *
    * @param object_list object list in map frame
-   * @return internal prediction objects containing the original objects and their map matches
+   * @return internal prediction objects containing the original objects and
+   * their map matches
    */
   std::vector<PredictionObject> matchObjectListToMap(const perception_msgs::msg::ObjectList& object_list) const;
 
@@ -130,7 +167,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @return map-based predictions or the configured fallback prediction
    */
   std::vector<perception_msgs::msg::ObjectStatePrediction> createPredictionsForMatchedObject(
-      const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+      PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
 
   /**
    * @brief Creates route alternatives for an object matched to lanelets
@@ -139,8 +176,17 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @param base_time time stamp of the input object list
    * @return one prediction per possible lanelet route
    */
-  std::vector<perception_msgs::msg::ObjectStatePrediction> createMapBasedPredictions(
-      const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+  void createMapBasedPredictions(PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+
+  /** Applies right-of-way constraints using nominal hypotheses from the
+   * complete scene. */
+  void applyYieldInteractions(std::vector<PredictionObject>& prediction_objects,
+                              const builtin_interfaces::msg::Time& base_time,
+                              const std::optional<perception_msgs::msg::EgoData>& ego_data) const;
+
+  /** Rebuilds sampled messages from retained motion profiles and normalizes
+   * their probabilities. */
+  void finalizeMapBasedPredictions(PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
 
   /**
    * @brief Creates a stationary fallback prediction
@@ -167,8 +213,10 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    *
    * @param base_state current object state used as template
    * @param route lanelet route to sample
-   * @param start_arc_length current object position along the first route lanelet
-   * @param travel_distance distance to travel along the route from the current position
+   * @param start_arc_length current object position along the first route
+   * lanelet
+   * @param travel_distance distance to travel along the route from the current
+   * position
    * @param speed longitudinal speed at the sampled position
    * @param base_time time stamp of the input object list
    * @param sample_index zero-based prediction sample index
@@ -225,6 +273,12 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    */
   rclcpp::Subscription<perception_msgs::msg::ObjectList>::SharedPtr subscriber_;
 
+  /** Subscriber for ego state and planned trajectory. */
+  rclcpp::Subscription<perception_msgs::msg::EgoData>::SharedPtr ego_data_subscriber_;
+
+  /** Latest ego message, transformed on demand when an object list arrives. */
+  perception_msgs::msg::EgoData::ConstSharedPtr latest_ego_data_;
+
   /**
    * @brief Publisher
    */
@@ -256,7 +310,8 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   double lanelet_match_max_distance_m_ = 0.5;
 
   /**
-   * @brief Maximum yaw difference for accepting a lanelet match in radians (parameter)
+   * @brief Maximum yaw difference for accepting a lanelet match in radians
+   * (parameter)
    */
   double lanelet_match_max_yaw_diff_rad_ = 1.57079632679;
 
@@ -271,27 +326,45 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   double prediction_sample_interval_s_ = 0.5;
 
   /**
-   * @brief Maximum lateral acceleration used to limit speed on curved map paths (parameter)
+   * @brief Maximum lateral acceleration used to limit speed on curved map paths
+   * (parameter)
    */
   double max_lateral_acceleration_mps2_ = 2.5;
 
   /**
-   * @brief Maximum longitudinal deceleration magnitude used to approach curve speed limits (parameter)
+   * @brief Maximum longitudinal deceleration magnitude used to approach curve
+   * speed limits (parameter)
    */
   double max_longitudinal_deceleration_mps2_ = 2.0;
 
   /**
-   * @brief Maximum longitudinal acceleration used to return to the observed speed after curves (parameter)
+   * @brief Maximum longitudinal acceleration used to return to the observed
+   * speed after curves (parameter)
    */
   double max_longitudinal_acceleration_mps2_ = 1.0;
 
   /**
-   * @brief Probability assigned to each laterally infeasible route when feasible alternatives exist (parameter)
+   * @brief Probability assigned to each kinematically infeasible route when
+   * feasible alternatives exist (parameter)
    */
   double infeasible_hypothesis_probability_ = 0.01;
 
+  /** Enable right-of-way-aware interaction prediction (parameter). */
+  bool yield_prediction_enabled_ = true;
+
+  /** Clearance between the object front and the yield line in meters
+   * (parameter). */
+  double yield_stop_margin_m_ = 0.5;
+
+  /** Time to wait after priority traffic clears in seconds (parameter). */
+  double yield_clearance_time_s_ = 1.0;
+
+  /** Maximum accepted ego-data age in seconds (parameter). */
+  double ego_data_timeout_s_ = 1.0;
+
   /**
-   * @brief Prediction mode for unmatched objects: "static" or "kinematic" (parameter)
+   * @brief Prediction mode for unmatched objects: "static" or "kinematic"
+   * (parameter)
    */
   std::string unmatched_object_prediction_mode_ = "kinematic";
 

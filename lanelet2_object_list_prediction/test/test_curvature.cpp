@@ -67,7 +67,7 @@ TEST(RouteCurvature, SuppressesIsolatedLaneletBoundaryKink) {
   const double route_length = remainingRouteLength(route, 0.0);
 
   EXPECT_LT(routeCurvature(route, 0.0, route_length, 10.0), 2.5 / (13.0 * 13.0));
-  EXPECT_TRUE(buildRouteMotionProfile(route, 0.0, 13.0, 2.5, 1.0, 2.0, false).lateral_limit_feasible);
+  EXPECT_TRUE(buildRouteMotionProfile(route, 0.0, 13.0, 2.5, 1.0, 2.0, false).feasible);
 }
 
 TEST(RouteCurvature, SuppressesShortLateralCenterlineStep) {
@@ -77,7 +77,7 @@ TEST(RouteCurvature, SuppressesShortLateralCenterlineStep) {
   const lanelet::routing::LaneletPath route({first, step, last});
   const double route_length = remainingRouteLength(route, 0.0);
 
-  EXPECT_TRUE(buildRouteMotionProfile(route, 0.0, 13.0, 2.5, 1.0, 2.0, false).lateral_limit_feasible);
+  EXPECT_TRUE(buildRouteMotionProfile(route, 0.0, 13.0, 2.5, 1.0, 2.0, false).feasible);
   EXPECT_NEAR(smoothedPointOnRoute(route, 0.0, route_length, route_length).y(), 0.0, 0.2);
 }
 
@@ -103,7 +103,7 @@ TEST(RouteCurvature, PreservesShortLeftAndRightTurns) {
     const lanelet::BasicPoint2d smoothed_end = smoothedPointOnRoute(route, 0.0, route_length, route_length);
 
     EXPECT_GT(maximumRouteCurvature(route), 0.05);
-    EXPECT_FALSE(buildRouteMotionProfile(route, 0.0, 13.0, 2.5, 1.0, 2.0, false).lateral_limit_feasible);
+    EXPECT_FALSE(buildRouteMotionProfile(route, 0.0, 13.0, 2.5, 1.0, 2.0, false).feasible);
     EXPECT_LT((smoothed_end - raw_end).norm(), 2.0);
     EXPECT_NEAR(routeYaw(route, 0.0, route_length, route_length), left ? M_PI_2 : -M_PI_2, 0.1);
   }

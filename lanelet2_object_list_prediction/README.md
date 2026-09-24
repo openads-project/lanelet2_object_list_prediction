@@ -14,6 +14,7 @@ For vehicles and other road users, the node matches each object to the nearest l
 flowchart LR
     NODE("lanelet2_object_list_prediction")
     S0:::hidden -->|~/tracked_object_list| NODE
+    S1:::hidden -->|~/ego_data| NODE
     NODE -->|~/object_list| P0:::hidden
     classDef hidden display: none;
 ```
@@ -23,6 +24,7 @@ flowchart LR
 | Topic | Type | Description |
 | --- | --- | --- |
 | `~/tracked_object_list` | `perception_msgs/msg/ObjectList` | Objects in any TF-reachable frame |
+| `~/ego_data` | `perception_msgs/msg/EgoData` | Ego state and planned trajectory in any TF-reachable frame |
 
 #### Published Topics
 
@@ -42,8 +44,17 @@ flowchart LR
 | `max_lateral_acceleration_mps2` | `float` | `2.5` | Maximum lateral acceleration used to limit map-based prediction speed |
 | `max_longitudinal_deceleration_mps2` | `float` | `2.0` | Maximum longitudinal deceleration magnitude used before curves |
 | `max_longitudinal_acceleration_mps2` | `float` | `1.0` | Maximum longitudinal acceleration used to return to the observed speed after curves |
-| `infeasible_hypothesis_probability` | `float` | `0.01` | Probability assigned to each laterally infeasible route when feasible alternatives exist. Set to `0.0` to discard infeasible routes entirely; if none remain, use `unmatched_object_prediction_mode`. |
+| `infeasible_hypothesis_probability` | `float` | `0.01` | Probability assigned to each kinematically infeasible route when feasible alternatives exist. Set to `0.0` to discard infeasible routes entirely; if none remain, use `unmatched_object_prediction_mode`. |
+| `yield_prediction_enabled` | `bool` | `true` | Apply Lanelet2 right-of-way rules to interacting predictions |
+| `yield_stop_margin_m` | `float` | `0.5` | Clearance between an object's front and a yield line |
+| `yield_clearance_time_s` | `float` | `1.0` | Time to wait after priority traffic clears |
+| `ego_data_timeout_s` | `float` | `1.0` | Maximum ego-data age used for interaction prediction |
 | `unmatched_object_prediction_mode` | `string` | `"kinematic"` | Prediction mode for objects that are not matched to the map |
+
+Right-of-way interactions are evaluated once from the nominal hypotheses of the complete scene. Every route hypothesis can
+cause another object to yield. Yielding predictions brake before the mapped yield line, wait until ego or another predicted
+object has cleared the priority lanelets, and then accelerate within the configured kinematic limits. Missing or stale ego
+data disables ego interaction only; object-to-object interaction remains active.
 
 ## Launch Files
 
@@ -52,6 +63,7 @@ flowchart LR
 | Argument | Default | Description |
 | --- | --- | --- |
 | `tracked_object_list_topic` | `"~/tracked_object_list"` | Topic to subscribe for incoming objects |
+| `ego_data_topic` | `"~/ego_data"` | Topic to subscribe for ego state and planned trajectory |
 | `object_list_topic` | `"~/object_list"` | Topic to publish objects with predictions |
 | `name` | `"lanelet2_object_list_prediction"` | node name |
 | `namespace` | `""` | node namespace |

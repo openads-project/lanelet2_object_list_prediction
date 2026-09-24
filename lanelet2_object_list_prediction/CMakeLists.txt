@@ -83,6 +83,23 @@ if(BUILD_TESTING)
     tf2_ros::tf2_ros
   )
   target_dependencies_as_system(test_curvature)
+
+  ament_add_gtest(test_yield_prediction test/test_yield_prediction.cpp)
+  target_include_directories(test_yield_prediction PRIVATE include)
+  target_link_libraries(test_yield_prediction
+    rclcpp::rclcpp
+    ${geometry_msgs_TARGETS}
+    ${perception_msgs_TARGETS}
+    ${lanelet2_core_LIBRARIES}
+    ${lanelet2_routing_LIBRARIES}
+    ${lanelet2_traffic_rules_LIBRARIES}
+    lanelet2_map_interface::lanelet2_map_interface
+    perception_msgs_utils::perception_msgs_utils
+    tf2::tf2
+    tf2_perception_msgs::tf2_perception_msgs
+    tf2_ros::tf2_ros
+  )
+  target_dependencies_as_system(test_yield_prediction)
 endif()
 
 ament_package()
