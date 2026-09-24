@@ -51,6 +51,12 @@ flowchart LR
 | `ego_data_timeout_s` | `float` | `1.0` | Maximum ego-data age used for interaction prediction |
 | `unmatched_object_prediction_mode` | `string` | `"kinematic"` | Prediction mode for objects that are not matched to the map |
 
+Map-based predictions project measured planar velocity onto the matched lanelet. Moving vehicles follow that direction,
+including backward motion within their current lanelet. The path starts with the observed lateral velocity and smoothly
+converges to the centerline over a distance chosen from the lateral acceleration limit. Body heading remains separate from travel
+direction. Nearly sideways motion uses the Cartesian constant-velocity fallback. Reverse predictions stop at the current
+lanelet boundary because the routing graph describes forward legal travel.
+
 Right-of-way interactions are evaluated once from the nominal hypotheses of the complete scene. Every route hypothesis can
 cause another object to yield. Yielding predictions brake before the mapped yield line, wait until ego or another predicted
 object has cleared the priority lanelets, and then accelerate within the configured kinematic limits. Missing or stale ego

@@ -122,11 +122,48 @@ TEST(RouteSampling, SmoothlyConvergesInitialLateralOffset) {
   EXPECT_NEAR(initial.y(), 1.5, 1e-6);
   EXPECT_NEAR(halfway.y(), 0.75, 1e-6);
   EXPECT_NEAR(converged.y(), 0.0, 1e-6);
-  EXPECT_LT(convergingRouteYaw(route, 0.0, route_length, 5.0, 1.5, convergence_distance), 0.0);
+  const lanelet::BasicPoint2d before = pointOnConvergingRoute(route, 0.0, route_length, 4.99, 1.5, convergence_distance);
+  const lanelet::BasicPoint2d after = pointOnConvergingRoute(route, 0.0, route_length, 5.01, 1.5, convergence_distance);
+  EXPECT_LT(after.y() - before.y(), 0.0);
 }
 
 TEST(RouteSampling, MoreLateralAccelerationConvergesSooner) {
   EXPECT_LT(lateralConvergenceDistance(1.5, 10.0, 9.0), lateralConvergenceDistance(1.5, 10.0, 2.25));
+}
+
+TEST(RouteSampling, StartsAlongMeasuredLateralVelocity) {
+  lanelet::Lanelet straight = makeLaneletWithCenterline(9, {{0.0, 0.0}, {100.0, 0.0}});
+  const lanelet::routing::LaneletPath route({straight});
+  const double route_length = remainingRouteLength(route, 0.0);
+  const double distance = lateralConvergenceDistance(1.0, 10.0, 2.5, 2.0);
+  const double slope = 2.0 / 10.0;
+  const lanelet::BasicPoint2d initial = pointOnConvergingRoute(route, 0.0, route_length, 0.0, 1.0, distance, slope);
+  const lanelet::BasicPoint2d next = pointOnConvergingRoute(route, 0.0, route_length, 0.001, 1.0, distance, slope);
+  const lanelet::BasicPoint2d end = pointOnConvergingRoute(route, 0.0, route_length, distance, 1.0, distance, slope);
+
+  EXPECT_NEAR((next.y() - initial.y()) / (next.x() - initial.x()), slope, 1e-3);
+  EXPECT_NEAR(end.y(), 0.0, 1e-6);
+  const double first_acceleration = 10.0 * 10.0 * std::abs(-6.0 / (distance * distance) - 4.0 * slope / distance);
+  const double last_acceleration = 10.0 * 10.0 * std::abs(6.0 / (distance * distance) + 2.0 * slope / distance);
+  EXPECT_LE(std::max(first_acceleration, last_acceleration), 2.5 + 1e-6);
+}
+
+TEST(RouteSampling, ReversingVelocityPointsAgainstBodyHeading) {
+  geometry_msgs::msg::Vector3 velocity;
+  velocity.x = -5.0;
+  velocity.y = 1.0;
+  const LaneletVelocity legal_lane_velocity = velocityAlongLanelet(velocity, 0.0);
+  const LaneletVelocity reverse_route_velocity = velocityAlongLanelet(velocity, M_PI);
+
+  EXPECT_LT(legal_lane_velocity.longitudinal, 0.0);
+  EXPECT_NEAR(reverse_route_velocity.longitudinal, 5.0, 1e-6);
+  EXPECT_NEAR(reverse_route_velocity.lateral, -1.0, 1e-6);
+
+  lanelet::Lanelet straight = makeLaneletWithCenterline(10, {{0.0, 0.0}, {20.0, 0.0}});
+  const lanelet::routing::LaneletPath reverse_route({straight.invert()});
+  const lanelet::BasicPoint2d next = pointOnRoute(reverse_route, 10.0, 1.0);
+  EXPECT_NEAR(next.x(), 9.0, 1e-6);
+  EXPECT_NEAR(std::abs(routeYaw(reverse_route, 10.0, 10.0, 0.0)), M_PI, 1e-6);
 }
 
 TEST(RouteSampling, StationaryObjectRetainsItsLateralOffset) {

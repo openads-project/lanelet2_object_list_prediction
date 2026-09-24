@@ -35,6 +35,18 @@ constexpr double kCurvatureSampleDistanceM = 1.0;
 constexpr int kHeadingMedianFilterHalfWidth = 6;
 constexpr double kHeadingMedianFilterSpacingM = 1.0;
 constexpr double kKinematicEpsilon = 1e-6;
+constexpr double kMotionDirectionMinSpeedMps = 0.3;
+constexpr double kMinAlongLaneSpeedFraction = 0.25;
+constexpr double kMotionTangentSampleDistanceM = 0.05;
+
+struct LaneletVelocity {
+  double longitudinal{0.0};
+  double lateral{0.0};
+};
+
+LaneletVelocity velocityAlongLanelet(const geometry_msgs::msg::Vector3& velocity, double yaw) {
+  return {velocity.x * std::cos(yaw) + velocity.y * std::sin(yaw), -velocity.x * std::sin(yaw) + velocity.y * std::cos(yaw)};
+}
 
 struct YieldConstraint {
   double stop_distance{0.0};
@@ -132,18 +144,37 @@ lanelet::BasicPoint2d pointOnRouteWithLateralOffset(const lanelet::routing::Lane
   return centerline_point + lanelet::BasicPoint2d(-std::sin(yaw) * lateral_offset, std::cos(yaw) * lateral_offset);
 }
 
-double convergingLateralOffset(double initial_offset, double travel_distance, double convergence_distance) {
+double convergingLateralOffset(double initial_offset,
+                               double travel_distance,
+                               double convergence_distance,
+                               double initial_slope = 0.0) {
   if (convergence_distance <= kKinematicEpsilon) return 0.0;
+  if (!std::isfinite(convergence_distance)) return initial_offset;
   const double progress = std::clamp(travel_distance / convergence_distance, 0.0, 1.0);
   const double smoothstep = progress * progress * (3.0 - 2.0 * progress);
-  return initial_offset * (1.0 - smoothstep);
+  return initial_offset * (1.0 - smoothstep) +
+         convergence_distance * initial_slope * progress * (1.0 - progress) * (1.0 - progress);
 }
 
-double lateralConvergenceDistance(double initial_offset, double longitudinal_speed, double max_lateral_acceleration) {
-  if (std::abs(initial_offset) <= kKinematicEpsilon) return 0.0;
+double lateralConvergenceDistance(double initial_offset,
+                                  double longitudinal_speed,
+                                  double max_lateral_acceleration,
+                                  double lateral_speed = 0.0) {
+  if (std::abs(initial_offset) <= kKinematicEpsilon && std::abs(lateral_speed) <= kKinematicEpsilon) return 0.0;
   if (longitudinal_speed <= kKinematicEpsilon) return std::numeric_limits<double>::infinity();
-  const double convergence_time = std::sqrt(6.0 * std::abs(initial_offset) / max_lateral_acceleration);
-  return longitudinal_speed * convergence_time;
+  const double initial_slope = lateral_speed / longitudinal_speed;
+  double distance = std::max(kRouteProfileResolutionM,
+                             longitudinal_speed * std::sqrt(6.0 * std::abs(initial_offset) / max_lateral_acceleration));
+  // This cubic reaches its greatest lateral acceleration at one of its endpoints.
+  while (true) {
+    const double first = -6.0 * initial_offset / (distance * distance) - 4.0 * initial_slope / distance;
+    const double last = 6.0 * initial_offset / (distance * distance) + 2.0 * initial_slope / distance;
+    if (std::max(std::abs(first), std::abs(last)) * longitudinal_speed * longitudinal_speed <=
+        max_lateral_acceleration + kKinematicEpsilon) {
+      return distance;
+    }
+    distance *= 2.0;
+  }
 }
 
 lanelet::BasicPoint2d pointOnConvergingRoute(const lanelet::routing::LaneletPath& route,
@@ -151,27 +182,11 @@ lanelet::BasicPoint2d pointOnConvergingRoute(const lanelet::routing::LaneletPath
                                              double route_length,
                                              double travel_distance,
                                              double initial_lateral_offset,
-                                             double convergence_distance) {
-  return pointOnRouteWithLateralOffset(route, start_arc_length, route_length, travel_distance,
-                                       convergingLateralOffset(initial_lateral_offset, travel_distance, convergence_distance));
-}
-
-double convergingRouteYaw(const lanelet::routing::LaneletPath& route,
-                          double start_arc_length,
-                          double route_length,
-                          double travel_distance,
-                          double initial_lateral_offset,
-                          double convergence_distance) {
-  const double before_distance = std::max(0.0, travel_distance - kCurvatureSampleDistanceM);
-  const double after_distance = std::min(route_length, travel_distance + kCurvatureSampleDistanceM);
-  if (after_distance - before_distance < kKinematicEpsilon) {
-    return routeYaw(route, start_arc_length, route_length, travel_distance);
-  }
-  const lanelet::BasicPoint2d before = pointOnConvergingRoute(route, start_arc_length, route_length, before_distance,
-                                                              initial_lateral_offset, convergence_distance);
-  const lanelet::BasicPoint2d after =
-      pointOnConvergingRoute(route, start_arc_length, route_length, after_distance, initial_lateral_offset, convergence_distance);
-  return std::atan2(after.y() - before.y(), after.x() - before.x());
+                                             double convergence_distance,
+                                             double initial_slope = 0.0) {
+  return pointOnRouteWithLateralOffset(
+      route, start_arc_length, route_length, travel_distance,
+      convergingLateralOffset(initial_lateral_offset, travel_distance, convergence_distance, initial_slope));
 }
 
 double routeCurvature(const lanelet::routing::LaneletPath& route,
@@ -601,15 +616,18 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
 
     geometry_msgs::msg::Point position;
     double object_yaw = 0.0;
+    geometry_msgs::msg::Vector3 velocity;
     try {
       position = perception_msgs::object_access::getPosition(prediction_object.object);
       object_yaw = perception_msgs::object_access::getYaw(prediction_object.object);
+      velocity = perception_msgs::object_access::getVelocityXYZ(prediction_object.object);
     } catch (const std::exception& ex) {
-      RCLCPP_WARN(this->get_logger(), "Could not read position or yaw of object %zu: %s", object_index, ex.what());
+      RCLCPP_WARN(this->get_logger(), "Could not read position, yaw, or velocity of object %zu: %s", object_index, ex.what());
       prediction_objects.push_back(prediction_object);
       continue;
     }
 
+    const double planar_speed = std::hypot(velocity.x, velocity.y);
     const lanelet::BasicPoint2d position_2d(position.x, position.y);
     const auto candidate_lanelets =
         lanelet::geometry::findWithin2d(map->laneletLayer, position_2d, lanelet_match_max_distance_m_);
@@ -644,8 +662,20 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
         continue;
       }
 
+      const double matched_yaw = computeLaneletYawAtArcLength(matched_lanelet, start_arc_length);
+      const LaneletVelocity lane_velocity = velocityAlongLanelet(velocity, matched_yaw);
+      if (planar_speed >= kMotionDirectionMinSpeedMps &&
+          std::abs(lane_velocity.longitudinal) < kMinAlongLaneSpeedFraction * planar_speed) {
+        continue;  // Nearly sideways motion is better represented by the Cartesian fallback.
+      }
+      const bool reversing = lane_velocity.longitudinal < -kKinematicEpsilon;
+      if (reversing) {
+        matched_lanelet = matched_lanelet.invert();
+        start_arc_length = lanelet_length - start_arc_length;
+      }
       prediction_object.lanelet_matches.push_back(
-          LaneletMatch{matched_lanelet, candidate_lanelet.first, start_arc_length, orientation_difference});
+          LaneletMatch{matched_lanelet, candidate_lanelet.first, start_arc_length, orientation_difference, reversing,
+                       std::abs(lane_velocity.longitudinal), reversing ? -lane_velocity.lateral : lane_velocity.lateral});
     }
 
     if (prediction_object.lanelet_matches.empty()) {
@@ -701,19 +731,11 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
     return;
   }
 
-  double speed = 0.0;
-
-  try {
-    speed = perception_msgs::object_access::getVelocityMagnitude(prediction_object.object);
-  } catch (const std::exception& ex) {
-    RCLCPP_WARN(this->get_logger(), "Could not read velocity for lanelet prediction: %s", ex.what());
-    return;
-  }
-
-  const double max_travel_distance = speed * prediction_horizon_s_;
   for (const LaneletMatch& match : prediction_object.lanelet_matches) {
+    const double speed = match.longitudinal_speed;
+    const double max_travel_distance = speed * prediction_horizon_s_;
     lanelet::routing::LaneletPaths routes;
-    if (max_travel_distance <= std::numeric_limits<double>::epsilon()) {
+    if (match.reversing || max_travel_distance <= std::numeric_limits<double>::epsilon()) {
       routes.push_back(lanelet::routing::LaneletPath({match.lanelet}));
     } else {
       lanelet::routing::PossiblePathsParams params;
@@ -742,6 +764,8 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
       hypothesis.route = lanelet_route;
       hypothesis.start_arc_length = match.start_arc_length;
       hypothesis.initial_speed = speed;
+      hypothesis.initial_lateral_speed = match.lateral_speed;
+      hypothesis.reversing = match.reversing;
       hypothesis.stop_at_route_end = stop_at_route_end;
       hypothesis.feasible = motion_profile.feasible;
       hypothesis.motion_profile = motion_profile.samples;
@@ -759,9 +783,9 @@ void Lanelet2ObjectListPrediction::finalizeMapBasedPredictions(PredictionObject&
     for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
       const double sample_time = prediction_sample_interval_s_ * static_cast<double>(sample_index + 1);
       const RouteMotionSample motion = sampleRouteMotionAtTime(hypothesis.motion_profile, sample_time);
-      hypothesis.prediction.states.push_back(sampleStateOnLaneletRoute(prediction_object.object.state, hypothesis.route,
-                                                                       hypothesis.start_arc_length, motion.distance, motion.speed,
-                                                                       hypothesis.initial_speed, base_time, sample_index));
+      hypothesis.prediction.states.push_back(sampleStateOnLaneletRoute(
+          prediction_object.object.state, hypothesis.route, hypothesis.start_arc_length, motion.distance, motion.speed,
+          hypothesis.initial_speed, hypothesis.initial_lateral_speed, hypothesis.reversing, base_time, sample_index));
     }
   }
 
@@ -871,6 +895,7 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
 
     for (std::size_t hypothesis_index = 0; hypothesis_index < prediction_object.hypotheses.size(); ++hypothesis_index) {
       const PredictionObject::Hypothesis& hypothesis = prediction_object.hypotheses[hypothesis_index];
+      if (hypothesis.reversing) continue;
       std::optional<YieldConstraint> selected_constraint;
       for (std::size_t route_index = 0; route_index < hypothesis.route.size(); ++route_index) {
         const lanelet::ConstLanelet& route_lanelet = hypothesis.route[route_index];
@@ -1017,6 +1042,8 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
     double travel_distance,
     double speed,
     double initial_speed,
+    double initial_lateral_speed,
+    bool reversing,
     const builtin_interfaces::msg::Time& base_time,
     std::size_t sample_index) const {
   perception_msgs::msg::ObjectState state = base_state;
@@ -1039,16 +1066,40 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
   const double lateral_offset = -std::sin(initial_yaw) * (fallback_position.x - initial_centerline_point.x()) +
                                 std::cos(initial_yaw) * (fallback_position.y - initial_centerline_point.y());
   const double clamped_travel_distance = std::clamp(travel_distance, 0.0, route_length);
-  const double convergence_distance = lateralConvergenceDistance(lateral_offset, initial_speed, max_lateral_acceleration_mps2_);
-  const double yaw =
-      convergingRouteYaw(route, start_arc_length, route_length, clamped_travel_distance, lateral_offset, convergence_distance);
+  const double convergence_distance =
+      lateralConvergenceDistance(lateral_offset, initial_speed, max_lateral_acceleration_mps2_, initial_lateral_speed);
+  const double initial_slope = initial_speed > kKinematicEpsilon ? initial_lateral_speed / initial_speed : 0.0;
   const lanelet::BasicPoint2d point = pointOnConvergingRoute(route, start_arc_length, route_length, clamped_travel_distance,
-                                                             lateral_offset, convergence_distance);
+                                                             lateral_offset, convergence_distance, initial_slope);
+  const double before_distance = std::max(0.0, clamped_travel_distance - kMotionTangentSampleDistanceM);
+  const double after_distance = std::min(route_length, clamped_travel_distance + kMotionTangentSampleDistanceM);
   geometry_msgs::msg::Vector3 velocity;
-  velocity.x = speed * std::cos(yaw);
-  velocity.y = speed * std::sin(yaw);
+  double path_yaw = routeYaw(route, start_arc_length, route_length, clamped_travel_distance);
+  if (after_distance - before_distance > kKinematicEpsilon) {
+    const lanelet::BasicPoint2d before = pointOnConvergingRoute(route, start_arc_length, route_length, before_distance,
+                                                                lateral_offset, convergence_distance, initial_slope);
+    const lanelet::BasicPoint2d after = pointOnConvergingRoute(route, start_arc_length, route_length, after_distance,
+                                                               lateral_offset, convergence_distance, initial_slope);
+    velocity.x = speed * (after.x() - before.x()) / (after_distance - before_distance);
+    velocity.y = speed * (after.y() - before.y()) / (after_distance - before_distance);
+    path_yaw = std::atan2(after.y() - before.y(), after.x() - before.x());
+  } else {
+    velocity.x = speed * std::cos(path_yaw);
+    velocity.y = speed * std::sin(path_yaw);
+  }
   velocity.z = 0.0;
-  setPredictedStateKinematics(state, point.x(), point.y(), fallback_position.z, yaw, velocity, base_time, sample_index);
+
+  // The body can face opposite its motion when reversing. Preserve its observed
+  // heading initially and converge to its final lane alignment with the path.
+  double body_yaw = path_yaw + (reversing ? M_PI : 0.0);
+  try {
+    const double observed_yaw = perception_msgs::object_access::getYaw(base_state);
+    const double progress =
+        convergence_distance <= kKinematicEpsilon ? 1.0 : std::clamp(clamped_travel_distance / convergence_distance, 0.0, 1.0);
+    body_yaw = observed_yaw + progress * std::remainder(body_yaw - observed_yaw, 2.0 * M_PI);
+  } catch (const std::exception&) {
+  }
+  setPredictedStateKinematics(state, point.x(), point.y(), fallback_position.z, body_yaw, velocity, base_time, sample_index);
   return state;
 }
 

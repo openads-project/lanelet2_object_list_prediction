@@ -55,13 +55,16 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Lanelet match candidate for one perceived object
    */
   struct LaneletMatch {
-    lanelet::ConstLanelet lanelet;  ///< Matched lanelet in the direction used for routing
-    double distance;                ///< Lateral distance from object position to lanelet
-                                    ///< geometry in meters
-    double start_arc_length;        ///< Arc length of the projected object position
-                                    ///< along the matched centerline
-    double orientation_difference;  ///< Absolute yaw difference between object
-                                    ///< heading and lanelet direction in radians
+    lanelet::ConstLanelet lanelet;   ///< Matched lanelet in the direction used for routing
+    double distance;                 ///< Lateral distance from object position to lanelet
+                                     ///< geometry in meters
+    double start_arc_length;         ///< Arc length of the projected object position
+                                     ///< along the matched centerline
+    double orientation_difference;   ///< Absolute yaw difference between object
+                                     ///< heading and lanelet direction in radians
+    bool reversing{false};           ///< Velocity points backward along the legal lanelet
+    double longitudinal_speed{0.0};  ///< Speed along the direction of travel
+    double lateral_speed{0.0};       ///< Signed velocity across the direction of travel
   };
 
   /**
@@ -76,6 +79,8 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
       lanelet::routing::LaneletPath route;
       double start_arc_length{0.0};
       double initial_speed{0.0};
+      double initial_lateral_speed{0.0};
+      bool reversing{false};
       bool stop_at_route_end{false};
       bool feasible{true};
       std::vector<RouteMotionSample> motion_profile;
@@ -218,8 +223,9 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @param travel_distance distance to travel along the route from the current
    * position
    * @param speed longitudinal speed at the sampled position
-   * @param initial_speed observed longitudinal speed used to determine the
-   * centerline convergence distance
+   * @param initial_speed observed speed along the route
+   * @param initial_lateral_speed observed speed across the route
+   * @param reversing whether the vehicle is moving backward in its lane
    * @param base_time time stamp of the input object list
    * @param sample_index zero-based prediction sample index
    * @return predicted object state at the requested sample
@@ -230,6 +236,8 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
                                                               double travel_distance,
                                                               double speed,
                                                               double initial_speed,
+                                                              double initial_lateral_speed,
+                                                              bool reversing,
                                                               const builtin_interfaces::msg::Time& base_time,
                                                               std::size_t sample_index) const;
 
