@@ -326,6 +326,12 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   double prediction_sample_interval_s_ = 0.5;
 
   /**
+   * @brief Distance over which a map-based prediction converges from its
+   * observed lateral position to the lanelet centerline (parameter)
+   */
+  double centerline_convergence_distance_m_ = 10.0;
+
+  /**
    * @brief Maximum lateral acceleration used to limit speed on curved map paths
    * (parameter)
    */

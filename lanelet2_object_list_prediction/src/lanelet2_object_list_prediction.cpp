@@ -132,6 +132,41 @@ lanelet::BasicPoint2d pointOnRouteWithLateralOffset(const lanelet::routing::Lane
   return centerline_point + lanelet::BasicPoint2d(-std::sin(yaw) * lateral_offset, std::cos(yaw) * lateral_offset);
 }
 
+double convergingLateralOffset(double initial_offset, double travel_distance, double convergence_distance) {
+  if (convergence_distance <= kKinematicEpsilon) return 0.0;
+  const double progress = std::clamp(travel_distance / convergence_distance, 0.0, 1.0);
+  const double smoothstep = progress * progress * (3.0 - 2.0 * progress);
+  return initial_offset * (1.0 - smoothstep);
+}
+
+lanelet::BasicPoint2d pointOnConvergingRoute(const lanelet::routing::LaneletPath& route,
+                                             double start_arc_length,
+                                             double route_length,
+                                             double travel_distance,
+                                             double initial_lateral_offset,
+                                             double convergence_distance) {
+  return pointOnRouteWithLateralOffset(route, start_arc_length, route_length, travel_distance,
+                                       convergingLateralOffset(initial_lateral_offset, travel_distance, convergence_distance));
+}
+
+double convergingRouteYaw(const lanelet::routing::LaneletPath& route,
+                          double start_arc_length,
+                          double route_length,
+                          double travel_distance,
+                          double initial_lateral_offset,
+                          double convergence_distance) {
+  const double before_distance = std::max(0.0, travel_distance - kCurvatureSampleDistanceM);
+  const double after_distance = std::min(route_length, travel_distance + kCurvatureSampleDistanceM);
+  if (after_distance - before_distance < kKinematicEpsilon) {
+    return routeYaw(route, start_arc_length, route_length, travel_distance);
+  }
+  const lanelet::BasicPoint2d before = pointOnConvergingRoute(route, start_arc_length, route_length, before_distance,
+                                                              initial_lateral_offset, convergence_distance);
+  const lanelet::BasicPoint2d after =
+      pointOnConvergingRoute(route, start_arc_length, route_length, after_distance, initial_lateral_offset, convergence_distance);
+  return std::atan2(after.y() - before.y(), after.x() - before.x());
+}
+
 double routeCurvature(const lanelet::routing::LaneletPath& route,
                       double start_arc_length,
                       double route_length,
@@ -304,6 +339,10 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
                                 false, 0.1, 60.0, 0.1);
   this->declareAndLoadParameter("prediction_sample_interval_s", prediction_sample_interval_s_,
                                 "Sampling interval of predicted states in seconds", true, false, false, 0.01, 10.0, 0.01);
+  this->declareAndLoadParameter("centerline_convergence_distance_m", centerline_convergence_distance_m_,
+                                "Distance over which predictions converge from the observed lateral position to the lanelet "
+                                "centerline in meters; zero converges immediately",
+                                true, false, false, 0.0, 100.0, 0.1);
   this->declareAndLoadParameter("max_lateral_acceleration_mps2", max_lateral_acceleration_mps2_,
                                 "Maximum lateral acceleration used to limit map-based prediction speed", true, false, false, 0.01,
                                 20.0, 0.01);
@@ -996,9 +1035,10 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
   const double lateral_offset = -std::sin(initial_yaw) * (fallback_position.x - initial_centerline_point.x()) +
                                 std::cos(initial_yaw) * (fallback_position.y - initial_centerline_point.y());
   const double clamped_travel_distance = std::clamp(travel_distance, 0.0, route_length);
-  const double yaw = routeYaw(route, start_arc_length, route_length, clamped_travel_distance);
-  const lanelet::BasicPoint2d point =
-      pointOnRouteWithLateralOffset(route, start_arc_length, route_length, clamped_travel_distance, lateral_offset);
+  const double yaw = convergingRouteYaw(route, start_arc_length, route_length, clamped_travel_distance, lateral_offset,
+                                        centerline_convergence_distance_m_);
+  const lanelet::BasicPoint2d point = pointOnConvergingRoute(route, start_arc_length, route_length, clamped_travel_distance,
+                                                             lateral_offset, centerline_convergence_distance_m_);
   geometry_msgs::msg::Vector3 velocity;
   velocity.x = speed * std::cos(yaw);
   velocity.y = speed * std::sin(yaw);
