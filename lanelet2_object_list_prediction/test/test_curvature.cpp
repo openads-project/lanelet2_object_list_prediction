@@ -192,6 +192,33 @@ TEST(RouteSampling, AcceptsReachableInitialDisplacement) {
   EXPECT_TRUE(initialMotionFeasible(observed, velocity, predicted, 0.5, 2.5, 1.0, 2.0));
 }
 
+TEST(RouteSampling, AllowsSmallRoundaboutAlignmentErrorOnly) {
+  geometry_msgs::msg::Point observed;
+  geometry_msgs::msg::Vector3 velocity;
+  velocity.x = 6.0;
+  geometry_msgs::msg::Point predicted;
+  predicted.x = 2.1875;  // Apparent 6.5 m/s² braking over the first 0.5 s.
+  predicted.y = 0.375;   // Apparent 3 m/s² lateral acceleration.
+
+  EXPECT_FALSE(initialMotionFeasible(observed, velocity, predicted, 0.5, 2.5, 1.0, 2.0));
+  EXPECT_TRUE(initialMotionFeasible(observed, velocity, predicted, 0.5, 2.5, 1.0, 2.0, 1.0));
+
+  predicted.y = 2.0;  // A sharp sideways turn still exceeds the alignment allowance.
+  EXPECT_FALSE(initialMotionFeasible(observed, velocity, predicted, 0.5, 2.5, 1.0, 2.0, 1.0));
+}
+
+TEST(RouteSampling, RoundaboutAllowanceAppliesOnlyNearTaggedLanelets) {
+  lanelet::Lanelet approach = makeLaneletWithCenterline(30, {{0.0, 0.0}, {20.0, 0.0}});
+  lanelet::Lanelet roundabout = makeLaneletWithCenterline(31, {{20.0, 0.0}, {30.0, 0.0}});
+  roundabout.setAttribute("intersection_type", "roundabout");
+  const lanelet::routing::LaneletPath route({approach, roundabout});
+
+  EXPECT_FALSE(startsNearRoundabout(route, 0.0));
+  EXPECT_TRUE(startsNearRoundabout(route, 15.0));
+  EXPECT_TRUE(startsNearRoundabout(route, 20.0));
+  EXPECT_TRUE(startsNearRoundabout(lanelet::routing::LaneletPath({roundabout}), 0.0));
+}
+
 TEST(RouteSampling, StationaryObjectRetainsItsLateralOffset) {
   lanelet::Lanelet straight = makeLaneletWithCenterline(8, {{0.0, 0.0}, {20.0, 0.0}});
   const lanelet::routing::LaneletPath route({straight});

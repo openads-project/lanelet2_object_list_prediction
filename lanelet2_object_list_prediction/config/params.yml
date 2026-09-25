@@ -8,6 +8,8 @@
     max_lateral_acceleration_mps2: 2.5
     max_longitudinal_deceleration_mps2: 2.0
     max_longitudinal_acceleration_mps2: 1.0
+    roundabout_initial_alignment_enabled: true
+    roundabout_initial_alignment_tolerance_m: 1.0
     infeasible_hypothesis_probability: 0.01
     yield_prediction_enabled: true
     following_prediction_enabled: true

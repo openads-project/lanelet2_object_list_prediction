@@ -38,6 +38,7 @@ constexpr double kKinematicEpsilon = 1e-6;
 constexpr double kMotionDirectionMinSpeedMps = 0.3;
 constexpr double kMinAlongLaneSpeedFraction = 0.25;
 constexpr double kMotionTangentSampleDistanceM = 0.05;
+constexpr double kRoundaboutLookaheadM = 5.0;
 
 bool isBicycleClass(uint8_t type) {
   return type == perception_msgs::msg::ObjectClassification::BICYCLE ||
@@ -65,6 +66,10 @@ bool isBicycleLane(const lanelet::ConstLanelet& lanelet) {
   return lanelet.attributeOr(lanelet::AttributeName::Subtype, std::string{}) == lanelet::AttributeValueString::BicycleLane;
 }
 
+bool isRoundabout(const lanelet::ConstLanelet& lanelet) {
+  return lanelet.attributeOr("intersection_type", std::string{}) == "roundabout";
+}
+
 struct LaneletVelocity {
   double longitudinal{0.0};
   double lateral{0.0};
@@ -80,7 +85,8 @@ bool initialMotionFeasible(const geometry_msgs::msg::Point& observed_position,
                            double sample_interval,
                            double max_lateral_acceleration,
                            double max_longitudinal_acceleration,
-                           double max_longitudinal_deceleration) {
+                           double max_longitudinal_deceleration,
+                           double alignment_tolerance = 0.0) {
   // A constant acceleration reaching the first position would need this
   // change in velocity. Check it in the observed direction of travel.
   const double scale = 2.0 / (sample_interval * sample_interval);
@@ -88,14 +94,17 @@ bool initialMotionFeasible(const geometry_msgs::msg::Point& observed_position,
   const double acceleration_y = (predicted_position.y - observed_position.y - observed_velocity.y * sample_interval) * scale;
   const double speed = std::hypot(observed_velocity.x, observed_velocity.y);
   if (speed <= kMotionDirectionMinSpeedMps) {
-    return std::hypot(acceleration_x, acceleration_y) <=
-           std::max({max_lateral_acceleration, max_longitudinal_acceleration, max_longitudinal_deceleration}) + kKinematicEpsilon;
+    const double excess = std::max(0.0, std::hypot(acceleration_x, acceleration_y) -
+                                           std::max({max_lateral_acceleration, max_longitudinal_acceleration,
+                                                     max_longitudinal_deceleration}));
+    return excess / scale <= alignment_tolerance + kKinematicEpsilon;
   }
   const double longitudinal = (acceleration_x * observed_velocity.x + acceleration_y * observed_velocity.y) / speed;
   const double lateral = (acceleration_y * observed_velocity.x - acceleration_x * observed_velocity.y) / speed;
-  return longitudinal <= max_longitudinal_acceleration + kKinematicEpsilon &&
-         longitudinal >= -max_longitudinal_deceleration - kKinematicEpsilon &&
-         std::abs(lateral) <= max_lateral_acceleration + kKinematicEpsilon;
+  const double longitudinal_excess =
+      std::max({0.0, longitudinal - max_longitudinal_acceleration, -longitudinal - max_longitudinal_deceleration});
+  const double lateral_excess = std::max(0.0, std::abs(lateral) - max_lateral_acceleration);
+  return std::hypot(longitudinal_excess, lateral_excess) / scale <= alignment_tolerance + kKinematicEpsilon;
 }
 
 struct YieldConstraint {
@@ -115,6 +124,16 @@ double remainingRouteLength(const lanelet::routing::LaneletPath& route, double s
     length += route_index == 0 ? std::max(0.0, lanelet_length - start_arc_length) : lanelet_length;
   }
   return length;
+}
+
+bool startsNearRoundabout(const lanelet::routing::LaneletPath& route, double start_arc_length) {
+  double distance_to_lanelet = 0.0;
+  for (std::size_t index = 0; index < route.size() && distance_to_lanelet <= kRoundaboutLookaheadM; ++index) {
+    if (isRoundabout(route[index])) return true;
+    const double lanelet_length = static_cast<double>(lanelet::geometry::length(route[index].centerline2d()));
+    distance_to_lanelet += index == 0 ? std::max(0.0, lanelet_length - start_arc_length) : lanelet_length;
+  }
+  return false;
 }
 
 lanelet::BasicPoint2d pointOnRoute(const lanelet::routing::LaneletPath& route, double start_arc_length, double travel_distance) {
@@ -635,6 +654,11 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
                                 "Maximum longitudinal acceleration used to "
                                 "return to the observed speed after curves",
                                 true, false, false, 0.01, 20.0, 0.01);
+  this->declareAndLoadParameter("roundabout_initial_alignment_enabled", roundabout_initial_alignment_enabled_,
+                                "Allow initial map alignment error near tagged roundabouts");
+  this->declareAndLoadParameter("roundabout_initial_alignment_tolerance_m", roundabout_initial_alignment_tolerance_m_,
+                                "Maximum initial position error allowed near tagged roundabouts in meters", true, false, false,
+                                0.0, 10.0, 0.1);
   this->declareAndLoadParameter("infeasible_hypothesis_probability", infeasible_hypothesis_probability_,
                                 "Probability assigned to each kinematically infeasible route when feasible "
                                 "alternatives exist; zero discards infeasible routes",
@@ -1068,7 +1092,11 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
                                          perception_msgs::object_access::getVelocityXYZ(prediction_object.object),
                                          perception_msgs::object_access::getPosition(first_state), prediction_sample_interval_s_,
                                          max_lateral_acceleration_mps2_, max_longitudinal_acceleration_mps2_,
-                                         max_longitudinal_deceleration_mps2_);
+                                         max_longitudinal_deceleration_mps2_,
+                                         roundabout_initial_alignment_enabled_ &&
+                                                 startsNearRoundabout(lanelet_route, match.start_arc_length)
+                                             ? roundabout_initial_alignment_tolerance_m_
+                                             : 0.0);
       }
       if (!feasible && infeasible_hypothesis_probability_ == 0.0) continue;
       PredictionObject::Hypothesis hypothesis;

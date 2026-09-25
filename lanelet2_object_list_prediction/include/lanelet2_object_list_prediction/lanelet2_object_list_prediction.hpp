@@ -352,6 +352,8 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * (parameter)
    */
   double max_lateral_acceleration_mps2_ = 2.5;
+  bool roundabout_initial_alignment_enabled_ = true;
+  double roundabout_initial_alignment_tolerance_m_ = 1.0;
 
   /**
    * @brief Maximum longitudinal deceleration magnitude used to approach curve

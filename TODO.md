@@ -1,3 +1,2 @@
-- make predictions respect ego and other predictions/objects, meaning they should not run into each other
 - clean up params, launch files, readmes
 - add functionality section to readme

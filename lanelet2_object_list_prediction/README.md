@@ -44,6 +44,8 @@ flowchart LR
 | `max_lateral_acceleration_mps2` | `float` | `2.5` | Maximum lateral acceleration used to limit map-based prediction speed |
 | `max_longitudinal_deceleration_mps2` | `float` | `2.0` | Maximum longitudinal deceleration magnitude used before curves |
 | `max_longitudinal_acceleration_mps2` | `float` | `1.0` | Maximum longitudinal acceleration used to return to the observed speed after curves |
+| `roundabout_initial_alignment_enabled` | `bool` | `true` | Allow a small initial position mismatch near tagged roundabouts |
+| `roundabout_initial_alignment_tolerance_m` | `float` | `1.0` | Maximum allowed first-step alignment error in meters near tagged roundabouts |
 | `infeasible_hypothesis_probability` | `float` | `0.01` | Probability assigned to each kinematically infeasible route when feasible alternatives exist. Set to `0.0` to discard infeasible routes entirely; if none remain, use `unmatched_object_prediction_mode`. |
 | `yield_prediction_enabled` | `bool` | `true` | Apply Lanelet2 right-of-way rules to interacting predictions |
 | `following_prediction_enabled` | `bool` | `true` | Limit same-lane predictions using ego and other objects ahead |
@@ -60,6 +62,9 @@ converges to the centerline over a distance chosen from the lateral acceleration
 direction. Nearly sideways motion uses the Cartesian constant-velocity fallback. Reverse predictions stop at the current
 lanelet boundary because the routing graph describes forward legal travel. A route is marked infeasible when
 its first predicted displacement would require more acceleration than the configured longitudinal or lateral limits.
+When `roundabout_initial_alignment_enabled` is true, routes beginning on or within 5 m of a lanelet tagged
+`intersection_type=roundabout` allow up to `roundabout_initial_alignment_tolerance_m` of first-step position error.
+The route curvature and braking limits still apply.
 
 Right-of-way interactions are evaluated once from the nominal hypotheses of the complete scene. Every route hypothesis can
 cause another object to yield. Yielding predictions brake before the mapped yield line, wait until ego or another predicted
