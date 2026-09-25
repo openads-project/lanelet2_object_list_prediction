@@ -195,6 +195,11 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
                               const builtin_interfaces::msg::Time& base_time,
                               const std::optional<perception_msgs::msg::EgoData>& ego_data) const;
 
+  /** Applies a single car-following pass using the yielded scene as input. */
+  void applyFollowingInteractions(std::vector<PredictionObject>& prediction_objects,
+                                  const builtin_interfaces::msg::Time& base_time,
+                                  const std::optional<perception_msgs::msg::EgoData>& ego_data) const;
+
   /** Rebuilds sampled messages from retained motion profiles and normalizes
    * their probabilities. */
   void finalizeMapBasedPredictions(PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
@@ -368,6 +373,15 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
 
   /** Enable right-of-way-aware interaction prediction (parameter). */
   bool yield_prediction_enabled_ = true;
+
+  /** Enable longitudinal following of ego and other objects (parameter). */
+  bool following_prediction_enabled_ = true;
+
+  /** Minimum bumper-to-bumper following gap in meters (parameter). */
+  double following_min_gap_m_ = 2.0;
+
+  /** Speed-dependent following headway in seconds (parameter). */
+  double following_time_headway_s_ = 1.0;
 
   /** Clearance between the object front and the yield line in meters
    * (parameter). */

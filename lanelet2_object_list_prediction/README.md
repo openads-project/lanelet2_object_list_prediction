@@ -46,6 +46,9 @@ flowchart LR
 | `max_longitudinal_acceleration_mps2` | `float` | `1.0` | Maximum longitudinal acceleration used to return to the observed speed after curves |
 | `infeasible_hypothesis_probability` | `float` | `0.01` | Probability assigned to each kinematically infeasible route when feasible alternatives exist. Set to `0.0` to discard infeasible routes entirely; if none remain, use `unmatched_object_prediction_mode`. |
 | `yield_prediction_enabled` | `bool` | `true` | Apply Lanelet2 right-of-way rules to interacting predictions |
+| `following_prediction_enabled` | `bool` | `true` | Limit same-lane predictions using ego and other objects ahead |
+| `following_min_gap_m` | `float` | `2.0` | Minimum bumper-to-bumper gap for following |
+| `following_time_headway_s` | `float` | `1.0` | Additional gap per meter per second of follower speed |
 | `yield_stop_margin_m` | `float` | `0.5` | Clearance between an object's front and a yield line |
 | `yield_clearance_time_s` | `float` | `1.0` | Time to wait after priority traffic clears |
 | `ego_data_timeout_s` | `float` | `1.0` | Maximum ego-data age used for interaction prediction |
@@ -68,6 +71,15 @@ conflict between the lanelet at the yield line (or its immediate successor) and 
 successors; a later crossing on the route does not make this line apply to every branch. An object already on the first successor still observes its predecessor's right-of-way rule until it passes
 the reference line. Missing or stale ego
 data disables ego interaction only; object-to-object interaction remains active.
+
+After right-of-way constraints, a single following pass uses ego's planned trajectory and every feasible hypothesis of
+other matched objects as possible leaders. Unmatched objects use their configured Cartesian fallback. A follower brakes
+within the longitudinal deceleration limit to maintain a minimum bumper gap plus a speed-dependent headway, then
+accelerates toward its observed speed when the leader moves away or leaves its route. Only participants on the same
+directed lanelet are considered; crossing traffic remains handled by right-of-way rules. If the observed speed and gap
+make braking impossible, the continuous hypothesis is marked infeasible. Following is evaluated once from the yielded
+scene, so a slowdown caused by following does not propagate through a longer queue in the same callback. The
+last ego trajectory pose is held if the published plan ends before the prediction horizon.
 
 ## Launch Files
 

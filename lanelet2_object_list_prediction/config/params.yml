@@ -10,6 +10,9 @@
     max_longitudinal_acceleration_mps2: 1.0
     infeasible_hypothesis_probability: 0.01
     yield_prediction_enabled: true
+    following_prediction_enabled: true
+    following_min_gap_m: 2.0
+    following_time_headway_s: 1.0
     yield_stop_margin_m: 0.5
     yield_clearance_time_s: 1.0
     ego_data_timeout_s: 1.0

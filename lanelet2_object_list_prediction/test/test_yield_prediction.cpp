@@ -215,6 +215,53 @@ TEST(YieldInteraction, InterpolatesEgoAcrossShortPriorityLaneletAndKeepsConflict
   EXPECT_FALSE(conflictsDuringClearance(TimeInterval{7.5, 8.0}, *occupancy, 1.0));
 }
 
+TEST(FollowingInteraction, MatchesOnlyTheSameDirectedLanelet) {
+  const lanelet::routing::LaneletPath route({makeStraightLanelet(60)});
+  EXPECT_NEAR(*projectLeaderOnRoute(route, 0.0, lanelet::BasicPoint2d(8.0, 0.0), 0.0, 60), 8.0, 1e-6);
+  EXPECT_FALSE(projectLeaderOnRoute(route, 0.0, lanelet::BasicPoint2d(8.0, 4.0), 0.0, std::nullopt));
+  EXPECT_FALSE(projectLeaderOnRoute(route, 0.0, lanelet::BasicPoint2d(8.0, 0.0), M_PI, std::nullopt));
+  EXPECT_FALSE(projectLeaderOnRoute(route, 0.0, lanelet::BasicPoint2d(8.0, 0.0), 0.0, 61));
+}
+
+TEST(FollowingInteraction, BrakesContinuouslyBeforeAStationaryLeader) {
+  RouteMotionSample follower{0.0, 4.0, 0.0};
+  constexpr double leader_clearance = 12.0;
+  for (int step_index = 1; step_index <= 100; ++step_index) {
+    const double time = 0.1 * step_index;
+    const double available = std::max(0.0, leader_clearance - follower.distance - follower.speed);
+    const double braking_speed = std::sqrt(4.0 * available);
+    const double position_speed = (leader_clearance - follower.distance - 0.05 * follower.speed) / 1.05;
+    const auto step = advanceFollowingStep(follower, time, 100.0, std::min({4.0, braking_speed, position_speed}),
+                                            leader_clearance, 1.0, 4.0, 1.0, 2.0, 100.0);
+    EXPECT_TRUE(step.feasible);
+    EXPECT_GE(step.sample.distance, follower.distance);
+    EXPECT_GE(step.sample.speed, follower.speed - 0.2 - 1e-6);
+    follower = step.sample;
+  }
+  EXPECT_LE(follower.distance + follower.speed, leader_clearance + 1e-3);
+  EXPECT_LT(follower.speed, 0.1);
+}
+
+TEST(FollowingInteraction, AcceleratesAfterLeaderLeavesTheRoute) {
+  RouteMotionSample follower{3.0, 0.0, 0.0};
+  for (int step_index = 1; step_index <= 50; ++step_index) {
+    const auto step = advanceFollowingStep(follower, 0.1 * step_index, 100.0, 4.0,
+                                            std::numeric_limits<double>::infinity(), 1.0, 4.0, 1.0, 2.0, 100.0);
+    ASSERT_TRUE(step.feasible);
+    EXPECT_LE(step.sample.speed - follower.speed, 0.1 + 1e-6);
+    follower = step.sample;
+  }
+  EXPECT_NEAR(follower.speed, 4.0, 1e-6);
+}
+
+TEST(FollowingInteraction, MarksAnUnavoidableCloseLeaderInfeasibleWithoutJump) {
+  const RouteMotionSample initial{0.0, 10.0, 0.0};
+  const auto step = advanceFollowingStep(initial, 0.1, 1.0, 0.0, 2.0, 1.0, 10.0, 1.0, 2.0, 100.0);
+  EXPECT_FALSE(step.feasible);
+  EXPECT_NEAR(step.sample.speed, 9.8, 1e-6);
+  EXPECT_GT(step.sample.distance, initial.distance);
+}
+
 TEST(YieldInteraction, AcceptsSmallTimestampOffsetsInEitherDirection) {
   EXPECT_TRUE(isEgoDataTimestampUsable(0.08, 1.0));
   EXPECT_TRUE(isEgoDataTimestampUsable(-0.08, 1.0));
