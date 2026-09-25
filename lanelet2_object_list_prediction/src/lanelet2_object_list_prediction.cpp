@@ -277,7 +277,8 @@ RouteMotionProfile buildRouteMotionProfile(const lanelet::routing::LaneletPath& 
                                            double max_longitudinal_acceleration,
                                            double max_longitudinal_deceleration,
                                            bool stop_at_route_end,
-                                           const std::optional<YieldConstraint>& yield_constraint = std::nullopt) {
+                                           const std::optional<YieldConstraint>& yield_constraint = std::nullopt,
+                                           bool enable_kinematic_limitations = true) {
   const double route_length = remainingRouteLength(route, start_arc_length);
   std::vector<double> distances;
   const std::size_t regular_segment_count = static_cast<std::size_t>(std::ceil(route_length / kRouteProfileResolutionM));
@@ -304,7 +305,7 @@ RouteMotionProfile buildRouteMotionProfile(const lanelet::routing::LaneletPath& 
     const double distance = distances[index];
     profile.samples[index].distance = distance;
     const double curvature = routeCurvature(route, start_arc_length, route_length, distance);
-    if (curvature > kKinematicEpsilon) {
+    if (enable_kinematic_limitations && curvature > kKinematicEpsilon) {
       curve_speed_limits[index] = std::min(initial_speed, std::sqrt(max_lateral_acceleration / curvature));
     }
   }
@@ -319,26 +320,29 @@ RouteMotionProfile buildRouteMotionProfile(const lanelet::routing::LaneletPath& 
     speed_limits[*stop_index] = 0.0;
   }
 
+  const double effective_deceleration =
+      enable_kinematic_limitations ? max_longitudinal_deceleration : std::numeric_limits<double>::infinity();
+  const double effective_acceleration =
+      enable_kinematic_limitations ? max_longitudinal_acceleration : std::numeric_limits<double>::infinity();
+
   // Propagate curve speed limits backwards so braking starts early enough.
   for (std::size_t index = segment_count; index > 0; --index) {
     const double distance = profile.samples[index].distance - profile.samples[index - 1].distance;
-    const double reachable_speed =
-        std::sqrt(speed_limits[index] * speed_limits[index] + 2.0 * max_longitudinal_deceleration * distance);
+    const double reachable_speed = std::sqrt(speed_limits[index] * speed_limits[index] + 2.0 * effective_deceleration * distance);
     speed_limits[index - 1] = std::min(speed_limits[index - 1], reachable_speed);
   }
 
   profile.samples.front().speed = initial_speed;
-  if (initial_speed > speed_limits.front() + kKinematicEpsilon) profile.feasible = false;
+  if (enable_kinematic_limitations && initial_speed > speed_limits.front() + kKinematicEpsilon) profile.feasible = false;
   for (std::size_t index = 1; index <= segment_count; ++index) {
     const double distance = profile.samples[index].distance - profile.samples[index - 1].distance;
     const double previous_speed = profile.samples[index - 1].speed;
     const double minimum_reachable_speed =
-        std::sqrt(std::max(0.0, previous_speed * previous_speed - 2.0 * max_longitudinal_deceleration * distance));
-    const double maximum_reachable_speed =
-        std::sqrt(previous_speed * previous_speed + 2.0 * max_longitudinal_acceleration * distance);
+        std::sqrt(std::max(0.0, previous_speed * previous_speed - 2.0 * effective_deceleration * distance));
+    const double maximum_reachable_speed = std::sqrt(previous_speed * previous_speed + 2.0 * effective_acceleration * distance);
     const double desired_speed = std::min(initial_speed, speed_limits[index]);
     profile.samples[index].speed = std::clamp(desired_speed, minimum_reachable_speed, maximum_reachable_speed);
-    if (profile.samples[index].speed > speed_limits[index] + kKinematicEpsilon) {
+    if (enable_kinematic_limitations && profile.samples[index].speed > speed_limits[index] + kKinematicEpsilon) {
       profile.feasible = false;
     }
 
@@ -632,56 +636,52 @@ RouteMotionSample sampleRouteMotionAtTime(const std::vector<RouteMotionSample>& 
 }  // namespace
 
 Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_object_list_prediction") {
-  this->declareAndLoadParameter("ll2_map_server_name", ll2_map_server_name_, "Name of lanelet2_map_server node", false, false,
-                                true);
-  this->declareAndLoadParameter("lanelet_match_max_distance_m", lanelet_match_max_distance_m_,
-                                "Maximum distance in meters for matching an object to a lanelet", true, false, false, 0.0, 100.0,
-                                0.1);
-  this->declareAndLoadParameter("lanelet_match_max_yaw_diff_rad", lanelet_match_max_yaw_diff_rad_,
-                                "Maximum yaw difference in radians for accepting a lanelet match", true, false, false, 0.0,
-                                3.14159265359);
-  this->declareAndLoadParameter("prediction_horizon_s", prediction_horizon_s_, "Prediction horizon in seconds", true, false,
-                                false, 0.1, 60.0, 0.1);
-  this->declareAndLoadParameter("prediction_sample_interval_s", prediction_sample_interval_s_,
-                                "Sampling interval of predicted states in seconds", true, false, false, 0.01, 10.0, 0.01);
-  this->declareAndLoadParameter("max_lateral_acceleration_mps2", max_lateral_acceleration_mps2_,
-                                "Maximum lateral acceleration used to limit map-based prediction speed", true, false, false, 0.01,
-                                20.0, 0.01);
-  this->declareAndLoadParameter("max_longitudinal_deceleration_mps2", max_longitudinal_deceleration_mps2_,
-                                "Maximum longitudinal deceleration magnitude used before curves", true, false, false, 0.01, 20.0,
-                                0.01);
-  this->declareAndLoadParameter("max_longitudinal_acceleration_mps2", max_longitudinal_acceleration_mps2_,
-                                "Maximum longitudinal acceleration used to "
-                                "return to the observed speed after curves",
-                                true, false, false, 0.01, 20.0, 0.01);
-  this->declareAndLoadParameter("roundabout_initial_alignment_enabled", roundabout_initial_alignment_enabled_,
-                                "Allow initial map alignment error near tagged roundabouts");
-  this->declareAndLoadParameter("roundabout_initial_alignment_tolerance_m", roundabout_initial_alignment_tolerance_m_,
-                                "Maximum initial position error allowed near tagged roundabouts in meters", true, false, false,
-                                0.0, 10.0, 0.1);
-  this->declareAndLoadParameter("infeasible_hypothesis_probability", infeasible_hypothesis_probability_,
-                                "Probability assigned to each kinematically infeasible route when feasible "
-                                "alternatives exist; zero discards infeasible routes",
-                                true, false, false, 0.0, 1.0, 0.01);
-  this->declareAndLoadParameter("yield_prediction_enabled", yield_prediction_enabled_,
-                                "Enable right-of-way-aware yield prediction");
-  this->declareAndLoadParameter("following_prediction_enabled", following_prediction_enabled_,
-                                "Enable longitudinal following of ego and other objects", true);
-  this->declareAndLoadParameter("following_min_gap_m", following_min_gap_m_,
-                                "Minimum bumper-to-bumper following gap in meters", true, false, false, 0.0, 20.0, 0.1);
-  this->declareAndLoadParameter("following_time_headway_s", following_time_headway_s_,
-                                "Speed-dependent following headway in seconds", true, false, false, 0.0, 5.0, 0.1);
-  this->declareAndLoadParameter("yield_stop_margin_m", yield_stop_margin_m_,
-                                "Clearance between an object's front and a yield line in meters", true, false, false, 0.0, 20.0,
-                                0.1);
-  this->declareAndLoadParameter("yield_clearance_time_s", yield_clearance_time_s_,
-                                "Time to wait after priority traffic clears in seconds", true, false, false, 0.0, 20.0, 0.1);
-  this->declareAndLoadParameter("ego_data_timeout_s", ego_data_timeout_s_,
-                                "Maximum age of ego data used for interaction prediction in seconds", true, false, false, 0.0, 60.0,
-                                0.1);
-  this->declareAndLoadParameter("unmatched_object_prediction_mode", unmatched_object_prediction_mode_,
-                                "Prediction mode for objects that are not matched to the map", true, false, false, std::nullopt,
-                                std::nullopt, std::nullopt, "Allowed values: static, kinematic");
+  this->declareAndLoadParameter("input.ego_data_timeout", input_ego_data_timeout_, "timeout for considering ego vehicle data [s]",
+                                true, false, false, 0.0, 60.0, 0.1);
+  this->declareAndLoadParameter("processing.map_matching.ll2_map_server_name", processing_map_matching_ll2_map_server_name_,
+                                "name of lanelet2_map_server node", false, false, true);
+  this->declareAndLoadParameter("processing.map_matching.max_distance", processing_map_matching_max_distance_,
+                                "max distance from a lanelet to consider it a match [m]", true, false, false, 0.0, 100.0, 0.1);
+  this->declareAndLoadParameter("processing.map_matching.max_delta_yaw_deg", processing_map_matching_max_delta_yaw_deg_,
+                                "max yaw difference from a lanelet direction to consider it a match [deg]", true, false, false,
+                                0.0, 180.0);
+  this->declareAndLoadParameter("processing.map_matching.fallback_mode", processing_map_matching_fallback_mode_,
+                                "fallback mode for objects not matched to map [kinematic|static]", true, false, false,
+                                std::nullopt, std::nullopt, std::nullopt, "Allowed values: static, kinematic");
+  this->declareAndLoadParameter("processing.kinematic_limitations.enable", processing_kinematic_limitations_enable_,
+                                "enable kinematic limitations");
+  this->declareAndLoadParameter("processing.kinematic_limitations.max_lateral_acceleration",
+                                processing_kinematic_limitations_max_lateral_acceleration_,
+                                "max lateral acceleration for predictions [m/s^2]", true, false, false, 0.01, 20.0, 0.01);
+  this->declareAndLoadParameter("processing.kinematic_limitations.max_longitudinal_deceleration",
+                                processing_kinematic_limitations_max_longitudinal_deceleration_,
+                                "max longitudinal deceleration for predictions [m/s^2]", true, false, false, 0.01, 20.0, 0.01);
+  this->declareAndLoadParameter("processing.kinematic_limitations.max_longitudinal_acceleration",
+                                processing_kinematic_limitations_max_longitudinal_acceleration_,
+                                "max longitudinal acceleration for predictions [m/s^2]", true, false, false, 0.01, 20.0, 0.01);
+  this->declareAndLoadParameter("processing.yielding.enable", processing_yielding_enable_, "enable yielding");
+  this->declareAndLoadParameter("processing.yielding.clearance_distance", processing_yielding_clearance_distance_,
+                                "clearance between front and yield line [m]", true, false, false, 0.0, 20.0, 0.1);
+  this->declareAndLoadParameter("processing.yielding.clearance_time", processing_yielding_clearance_time_,
+                                "time to wait after priority traffic has cleared [s]", true, false, false, 0.0, 20.0, 0.1);
+  this->declareAndLoadParameter("processing.following.enable", processing_following_enable_,
+                                "enable following, avoiding collisions with leading objects");
+  this->declareAndLoadParameter("processing.following.headway_distance", processing_following_headway_distance_,
+                                "min distance to the leading object [m]", true, false, false, 0.0, 20.0, 0.1);
+  this->declareAndLoadParameter("processing.following.headway_time", processing_following_headway_time_,
+                                "min time headway to the leading object [s]", true, false, false, 0.0, 5.0, 0.1);
+  this->declareAndLoadParameter("processing.roundabout.enable", processing_roundabout_enable_,
+                                "enable special roundabout handling");
+  this->declareAndLoadParameter(
+      "processing.roundabout.initial_alignment_tolerance", processing_roundabout_initial_alignment_tolerance_,
+      "tolerance for initial alignment with roundabout centerline, not respecting kinematic limitations [m]", true, false, false,
+      0.0, 10.0, 0.1);
+  this->declareAndLoadParameter("output.prediction_horizon", output_prediction_horizon_, "prediction time horizon [s]", true,
+                                false, false, 0.1, 60.0, 0.1);
+  this->declareAndLoadParameter("output.sample_interval", output_sample_interval_, "time interval between prediction samples [s]",
+                                true, false, false, 0.01, 10.0, 0.01);
+  this->declareAndLoadParameter("output.infeasible_hypothesis_probability", output_infeasible_hypothesis_probability_,
+                                "probability for infeasible hypotheses", true, false, false, 0.0, 1.0, 0.01);
   this->setup();
 }
 
@@ -785,7 +785,7 @@ void Lanelet2ObjectListPrediction::setup() {
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
   // map interface
-  ll2_interface_ = std::make_unique<Lanelet2MapInterface>(*this, ll2_map_server_name_);
+  ll2_interface_ = std::make_unique<Lanelet2MapInterface>(*this, processing_map_matching_ll2_map_server_name_);
 
   // callback for dynamic parameter configuration
   parameters_callback_ = this->add_on_set_parameters_callback(
@@ -842,11 +842,11 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
   }
 
   std::optional<perception_msgs::msg::EgoData> ego_data_map_frame;
-  if ((yield_prediction_enabled_ || following_prediction_enabled_) && latest_ego_data_ != nullptr &&
+  if ((processing_yielding_enable_ || processing_following_enable_) && latest_ego_data_ != nullptr &&
       !latest_ego_data_->trajectory_planned.empty()) {
     const double ego_age =
         (rclcpp::Time(object_list_map_frame.header.stamp) - rclcpp::Time(latest_ego_data_->header.stamp)).seconds();
-    if (isEgoDataTimestampUsable(ego_age, ego_data_timeout_s_)) {
+    if (isEgoDataTimestampUsable(ego_age, input_ego_data_timeout_)) {
       try {
         if (latest_ego_data_->state.header.frame_id == ll2_interface_->map_frame_id_) {
           ego_data_map_frame = *latest_ego_data_;
@@ -865,10 +865,10 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
     }
   }
 
-  if (yield_prediction_enabled_) {
+  if (processing_yielding_enable_) {
     applyYieldInteractions(prediction_objects, object_list_map_frame.header.stamp, ego_data_map_frame);
   }
-  if (following_prediction_enabled_) {
+  if (processing_following_enable_) {
     applyFollowingInteractions(prediction_objects, object_list_map_frame.header.stamp, ego_data_map_frame);
   }
   for (PredictionObject& prediction_object : prediction_objects) {
@@ -925,7 +925,7 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
     const double planar_speed = std::hypot(velocity.x, velocity.y);
     const lanelet::BasicPoint2d position_2d(position.x, position.y);
     const auto candidate_lanelets =
-        lanelet::geometry::findWithin2d(map->laneletLayer, position_2d, lanelet_match_max_distance_m_);
+        lanelet::geometry::findWithin2d(map->laneletLayer, position_2d, processing_map_matching_max_distance_);
 
     for (const auto& candidate_lanelet : candidate_lanelets) {
       lanelet::ConstLanelet lanelet = candidate_lanelet.second;
@@ -949,7 +949,7 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
         orientation_difference = lanelet_difference;
       }
 
-      if (orientation_difference > lanelet_match_max_yaw_diff_rad_) {
+      if (orientation_difference > processing_map_matching_max_delta_yaw_deg_ * M_PI / 180.0) {
         continue;
       }
 
@@ -1004,7 +1004,7 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
 
     if (prediction_object.lanelet_matches.empty()) {
       RCLCPP_DEBUG(this->get_logger(), "Object %zu did not match any lanelet within %.2f m", object_index,
-                   lanelet_match_max_distance_m_);
+                   processing_map_matching_max_distance_);
     } else {
       RCLCPP_DEBUG(this->get_logger(), "Object %zu matched to %zu lanelet candidate(s)", object_index,
                    prediction_object.lanelet_matches.size());
@@ -1027,7 +1027,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
   }
 
   if (predictions.empty()) {
-    if (unmatched_object_prediction_mode_ == "static") {
+    if (processing_map_matching_fallback_mode_ == "static") {
       predictions.push_back(createStationaryPrediction(prediction_object.object, base_time));
     } else {
       predictions.push_back(createConstantVelocityPrediction(prediction_object.object, base_time));
@@ -1056,7 +1056,7 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
                                                                                            : routing_graph_.get();
     if (routing_graph == nullptr) continue;
     const double speed = match.longitudinal_speed;
-    const double max_travel_distance = speed * prediction_horizon_s_;
+    const double max_travel_distance = speed * output_prediction_horizon_;
     lanelet::routing::LaneletPaths routes;
     if (match.reversing || max_travel_distance <= std::numeric_limits<double>::epsilon()) {
       routes.push_back(lanelet::routing::LaneletPath({match.lanelet}));
@@ -1079,26 +1079,29 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
     for (const lanelet::routing::LaneletPath& lanelet_route : routes) {
       const double route_length = remainingRouteLength(lanelet_route, match.start_arc_length);
       const bool stop_at_route_end = route_length + kKinematicEpsilon < max_travel_distance;
-      const RouteMotionProfile motion_profile =
-          buildRouteMotionProfile(lanelet_route, match.start_arc_length, speed, max_lateral_acceleration_mps2_,
-                                  max_longitudinal_acceleration_mps2_, max_longitudinal_deceleration_mps2_, stop_at_route_end);
+      const RouteMotionProfile motion_profile = buildRouteMotionProfile(
+          lanelet_route, match.start_arc_length, speed, processing_kinematic_limitations_max_lateral_acceleration_,
+          processing_kinematic_limitations_max_longitudinal_acceleration_,
+          processing_kinematic_limitations_max_longitudinal_deceleration_, stop_at_route_end, std::nullopt,
+          processing_kinematic_limitations_enable_);
       bool feasible = motion_profile.feasible;
-      if (feasible) {
-        const RouteMotionSample first_motion = sampleRouteMotionAtTime(motion_profile.samples, prediction_sample_interval_s_);
+      if (processing_kinematic_limitations_enable_ && feasible) {
+        const RouteMotionSample first_motion = sampleRouteMotionAtTime(motion_profile.samples, output_sample_interval_);
         const perception_msgs::msg::ObjectState first_state = sampleStateOnLaneletRoute(
             prediction_object.object.state, lanelet_route, match.start_arc_length, first_motion.distance, first_motion.speed,
             speed, match.lateral_speed, match.reversing, base_time, 0);
-        feasible = initialMotionFeasible(perception_msgs::object_access::getPosition(prediction_object.object),
-                                         perception_msgs::object_access::getVelocityXYZ(prediction_object.object),
-                                         perception_msgs::object_access::getPosition(first_state), prediction_sample_interval_s_,
-                                         max_lateral_acceleration_mps2_, max_longitudinal_acceleration_mps2_,
-                                         max_longitudinal_deceleration_mps2_,
-                                         roundabout_initial_alignment_enabled_ &&
-                                                 startsNearRoundabout(lanelet_route, match.start_arc_length)
-                                             ? roundabout_initial_alignment_tolerance_m_
-                                             : 0.0);
+        feasible =
+            initialMotionFeasible(perception_msgs::object_access::getPosition(prediction_object.object),
+                                  perception_msgs::object_access::getVelocityXYZ(prediction_object.object),
+                                  perception_msgs::object_access::getPosition(first_state), output_sample_interval_,
+                                  processing_kinematic_limitations_max_lateral_acceleration_,
+                                  processing_kinematic_limitations_max_longitudinal_acceleration_,
+                                  processing_kinematic_limitations_max_longitudinal_deceleration_,
+                                  processing_roundabout_enable_ && startsNearRoundabout(lanelet_route, match.start_arc_length)
+                                      ? processing_roundabout_initial_alignment_tolerance_
+                                      : 0.0);
       }
-      if (!feasible && infeasible_hypothesis_probability_ == 0.0) continue;
+      if (!feasible && output_infeasible_hypothesis_probability_ == 0.0) continue;
       PredictionObject::Hypothesis hypothesis;
       hypothesis.route = lanelet_route;
       hypothesis.participant = match.participant;
@@ -1124,7 +1127,7 @@ void Lanelet2ObjectListPrediction::finalizeMapBasedPredictions(PredictionObject&
     hypothesis.prediction.states.clear();
     hypothesis.prediction.states.reserve(sample_count);
     for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
-      const double sample_time = prediction_sample_interval_s_ * static_cast<double>(sample_index + 1);
+      const double sample_time = output_sample_interval_ * static_cast<double>(sample_index + 1);
       const RouteMotionSample motion = sampleRouteMotionAtTime(hypothesis.motion_profile, sample_time);
       hypothesis.prediction.states.push_back(sampleStateOnLaneletRoute(
           prediction_object.object.state, hypothesis.route, hypothesis.start_arc_length, motion.distance, motion.speed,
@@ -1132,7 +1135,7 @@ void Lanelet2ObjectListPrediction::finalizeMapBasedPredictions(PredictionObject&
     }
   }
 
-  if (infeasible_hypothesis_probability_ == 0.0) {
+  if (output_infeasible_hypothesis_probability_ == 0.0) {
     prediction_object.hypotheses.erase(
         std::remove_if(prediction_object.hypotheses.begin(), prediction_object.hypotheses.end(),
                        [](const PredictionObject::Hypothesis& hypothesis) { return !hypothesis.feasible; }),
@@ -1145,7 +1148,7 @@ void Lanelet2ObjectListPrediction::finalizeMapBasedPredictions(PredictionObject&
   const std::size_t infeasible_count = prediction_object.hypotheses.size() - feasible_count;
   if (feasible_count > 0) {
     const double infeasible_probability =
-        infeasible_count > 0 ? std::min(infeasible_hypothesis_probability_, 1.0 / static_cast<double>(infeasible_count + 1))
+        infeasible_count > 0 ? std::min(output_infeasible_hypothesis_probability_, 1.0 / static_cast<double>(infeasible_count + 1))
                              : 0.0;
     const double feasible_weight = std::accumulate(
         prediction_object.hypotheses.begin(), prediction_object.hypotheses.end(), 0.0,
@@ -1218,7 +1221,7 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
   // them, so interactions are independent of object processing order.
   for (std::size_t object_index = 0; object_index < prediction_objects.size(); ++object_index) {
     const PredictionObject& prediction_object = prediction_objects[object_index];
-    double front_offset = yield_stop_margin_m_;
+    double front_offset = processing_yielding_clearance_distance_;
     try {
       const double length = perception_msgs::object_access::getLength(prediction_object.object);
       const double reference_to_center = prediction_object.object.state.reference_point.translation_to_geometric_center.x;
@@ -1285,11 +1288,11 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
           }
           const lanelet::ConstLanelet& conflict_lanelet = hypothesis.route[*conflict_index];
           const std::optional<TimeInterval> ego_interval =
-              ego_data ? egoRouteOccupancy(*ego_data, base_stamp, prediction_horizon_s_, priority_lanelets, conflict_lanelet)
+              ego_data ? egoRouteOccupancy(*ego_data, base_stamp, output_prediction_horizon_, priority_lanelets, conflict_lanelet)
                        : std::nullopt;
-          if (ego_interval.has_value() && conflictsDuringClearance(yielding_interval, *ego_interval, yield_clearance_time_s_)) {
+          if (ego_interval.has_value() && conflictsDuringClearance(yielding_interval, *ego_interval, processing_yielding_clearance_time_)) {
             latest_clearance =
-                std::max(latest_clearance, std::isfinite(ego_interval->exit) ? ego_interval->exit : prediction_horizon_s_);
+                std::max(latest_clearance, std::isfinite(ego_interval->exit) ? ego_interval->exit : output_prediction_horizon_);
           }
 
           for (std::size_t priority_object_index = 0; priority_object_index < prediction_objects.size();
@@ -1299,15 +1302,15 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
               const std::optional<TimeInterval> priority_interval =
                   routeOccupancy(priority_hypothesis, priority_lanelet_ids, conflict_lanelet);
               if (priority_interval.has_value() &&
-                  conflictsDuringClearance(yielding_interval, *priority_interval, yield_clearance_time_s_)) {
+                  conflictsDuringClearance(yielding_interval, *priority_interval, processing_yielding_clearance_time_)) {
                 latest_clearance = std::max(
-                    latest_clearance, std::isfinite(priority_interval->exit) ? priority_interval->exit : prediction_horizon_s_);
+                    latest_clearance, std::isfinite(priority_interval->exit) ? priority_interval->exit : output_prediction_horizon_);
               }
             }
           }
 
           if (std::isfinite(latest_clearance)) {
-            const YieldConstraint constraint{stop_distance, latest_clearance + yield_clearance_time_s_};
+            const YieldConstraint constraint{stop_distance, latest_clearance + processing_yielding_clearance_time_};
             if (!selected_constraint.has_value() ||
                 constraint.stop_distance < selected_constraint->stop_distance - kKinematicEpsilon) {
               selected_constraint = constraint;
@@ -1341,8 +1344,10 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
         PredictionObject::Hypothesis& hypothesis = prediction_object.hypotheses[hypothesis_index];
         const RouteMotionProfile yielded_profile =
             buildRouteMotionProfile(hypothesis.route, hypothesis.start_arc_length, hypothesis.initial_speed,
-                                    max_lateral_acceleration_mps2_, max_longitudinal_acceleration_mps2_,
-                                    max_longitudinal_deceleration_mps2_, hypothesis.stop_at_route_end, selected_constraint);
+                                    processing_kinematic_limitations_max_lateral_acceleration_,
+                                    processing_kinematic_limitations_max_longitudinal_acceleration_,
+                                    processing_kinematic_limitations_max_longitudinal_deceleration_, hypothesis.stop_at_route_end,
+                                    selected_constraint, processing_kinematic_limitations_enable_);
         hypothesis.motion_profile = yielded_profile.samples;
         hypothesis.feasible = hypothesis.feasible && yielded_profile.feasible;
       }
@@ -1388,7 +1393,7 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
   const double ego_rear = ego_data ? ego_data->state.reference_point.translation_to_geometric_center.x -
                                          0.5 * ego_data->length
                                    : 0.0;
-  const double step_size = std::min(0.1, prediction_sample_interval_s_);
+  const double step_size = std::min(0.1, output_sample_interval_);
   std::vector<std::vector<std::optional<RouteMotionProfile>>> results(prediction_objects.size());
   for (std::size_t object_index = 0; object_index < prediction_objects.size(); ++object_index) {
     const PredictionObject& object = prediction_objects[object_index];
@@ -1404,8 +1409,8 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
       std::optional<RouteMotionProfile> unconstrained_profile;
       const double route_length = remainingRouteLength(follower.route, follower.start_arc_length);
 
-      for (double time = 0.0; time < prediction_horizon_s_ - kKinematicEpsilon;) {
-        const double next_time = std::min(prediction_horizon_s_, time + step_size);
+      for (double time = 0.0; time < output_prediction_horizon_ - kKinematicEpsilon;) {
+        const double next_time = std::min(output_prediction_horizon_, time + step_size);
         const double dt = next_time - time;
         const RouteMotionSample& previous = profile.samples.back();
         RouteMotionSample nominal = sampleRouteMotionAtTime(follower.motion_profile, next_time);
@@ -1424,14 +1429,14 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
                                                            yaw_next, lanelet_id);
           const double gap = (projected_now ? *projected_now : *projected_next) + leader_rear -
                              previous.distance - follower_front;
-          const double clearance = *projected_next + leader_rear - follower_front - following_min_gap_m_;
+          const double clearance = *projected_next + leader_rear - follower_front - processing_following_headway_distance_;
           distance_limit = std::min(distance_limit, clearance);
           const double available_braking_distance =
-              std::max(0.0, gap - following_min_gap_m_ - following_time_headway_s_ * previous.speed);
+              std::max(0.0, gap - processing_following_headway_distance_ - processing_following_headway_time_ * previous.speed);
           braking_speed_limit = std::min(
               braking_speed_limit,
               std::sqrt(leader_speed * leader_speed +
-                        2.0 * max_longitudinal_deceleration_mps2_ * available_braking_distance));
+                        2.0 * processing_kinematic_limitations_max_longitudinal_deceleration_ * available_braking_distance));
         };
 
         if (!ego_poses.empty()) {
@@ -1452,7 +1457,7 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
             try {
               const auto position = perception_msgs::object_access::getPosition(leader_object.object);
               const auto velocity = perception_msgs::object_access::getVelocityXYZ(leader_object.object);
-              const double speed = unmatched_object_prediction_mode_ == "static" ? 0.0 : std::hypot(velocity.x, velocity.y);
+              const double speed = processing_map_matching_fallback_mode_ == "static" ? 0.0 : std::hypot(velocity.x, velocity.y);
               const double yaw = speed > kMotionDirectionMinSpeedMps
                                      ? std::atan2(velocity.y, velocity.x)
                                      : perception_msgs::object_access::getYaw(leader_object.object);
@@ -1480,26 +1485,29 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
 
         if (std::isfinite(distance_limit)) {
           const double positional_speed_limit =
-              (distance_limit - previous.distance - 0.5 * previous.speed * dt) /
-              (following_time_headway_s_ + 0.5 * dt);
+              (distance_limit - previous.distance - 0.5 * previous.speed * dt) / (processing_following_headway_time_ + 0.5 * dt);
           speed_limit = std::min({speed_limit, std::max(0.0, positional_speed_limit), braking_speed_limit});
         }
         if (!following_active && speed_limit >= nominal.speed - kKinematicEpsilon &&
-            distance_limit >= nominal.distance + following_time_headway_s_ * nominal.speed - kKinematicEpsilon) {
+            distance_limit >= nominal.distance + processing_following_headway_time_ * nominal.speed - kKinematicEpsilon) {
           profile.samples.push_back(nominal);
           time = next_time;
           continue;
         }
         following_active = true;
         if (!unconstrained_profile) {
-          unconstrained_profile = buildRouteMotionProfile(
-              follower.route, follower.start_arc_length, follower.initial_speed, max_lateral_acceleration_mps2_,
-              max_longitudinal_acceleration_mps2_, max_longitudinal_deceleration_mps2_, follower.stop_at_route_end);
+          unconstrained_profile =
+              buildRouteMotionProfile(follower.route, follower.start_arc_length, follower.initial_speed,
+                                      processing_kinematic_limitations_max_lateral_acceleration_,
+                                      processing_kinematic_limitations_max_longitudinal_acceleration_,
+                                      processing_kinematic_limitations_max_longitudinal_deceleration_, follower.stop_at_route_end,
+                                      std::nullopt, processing_kinematic_limitations_enable_);
         }
         speed_limit = std::min(speed_limit, profileSpeedAtDistance(unconstrained_profile->samples, previous.distance));
         const FollowingStepResult step = advanceFollowingStep(
-            previous, next_time, nominal.distance, speed_limit, distance_limit, following_time_headway_s_,
-            follower.initial_speed, max_longitudinal_acceleration_mps2_, max_longitudinal_deceleration_mps2_, route_length);
+            previous, next_time, nominal.distance, speed_limit, distance_limit, processing_following_headway_time_,
+            follower.initial_speed, processing_kinematic_limitations_max_longitudinal_acceleration_,
+            processing_kinematic_limitations_max_longitudinal_deceleration_, route_length);
         profile.feasible = profile.feasible && step.feasible;
         profile.samples.push_back(step.sample);
         time = next_time;
@@ -1562,7 +1570,7 @@ perception_msgs::msg::ObjectStatePrediction Lanelet2ObjectListPrediction::create
   }
 
   for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
-    const double time_offset = prediction_sample_interval_s_ * static_cast<double>(sample_index + 1);
+    const double time_offset = output_sample_interval_ * static_cast<double>(sample_index + 1);
     perception_msgs::msg::ObjectState state = object.state;
     setPredictedStateKinematics(state, position.x + velocity.x * time_offset, position.y + velocity.y * time_offset,
                                 position.z + velocity.z * time_offset, yaw, velocity, base_time, sample_index);
@@ -1603,7 +1611,10 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
                                 std::cos(initial_yaw) * (fallback_position.y - initial_centerline_point.y());
   const double clamped_travel_distance = std::clamp(travel_distance, 0.0, route_length);
   const double convergence_distance =
-      lateralConvergenceDistance(lateral_offset, initial_speed, max_lateral_acceleration_mps2_, initial_lateral_speed);
+      processing_kinematic_limitations_enable_
+          ? lateralConvergenceDistance(lateral_offset, initial_speed, processing_kinematic_limitations_max_lateral_acceleration_,
+                                       initial_lateral_speed)
+          : kRouteProfileResolutionM;
   const double initial_slope = initial_speed > kKinematicEpsilon ? initial_lateral_speed / initial_speed : 0.0;
   const lanelet::BasicPoint2d point = pointOnConvergingRoute(route, start_arc_length, route_length, clamped_travel_distance,
                                                              lateral_offset, convergence_distance, initial_slope);
@@ -1640,7 +1651,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
 }
 
 std::size_t Lanelet2ObjectListPrediction::getPredictionSampleCount() const {
-  return std::max<std::size_t>(1, static_cast<std::size_t>(std::floor(prediction_horizon_s_ / prediction_sample_interval_s_)));
+  return std::max<std::size_t>(1, static_cast<std::size_t>(std::floor(output_prediction_horizon_ / output_sample_interval_)));
 }
 
 void Lanelet2ObjectListPrediction::setPredictedStateKinematics(perception_msgs::msg::ObjectState& state,
@@ -1653,7 +1664,7 @@ void Lanelet2ObjectListPrediction::setPredictedStateKinematics(perception_msgs::
                                                                std::size_t sample_index) const {
   state.header.frame_id = ll2_interface_->map_frame_id_;
   const rclcpp::Time stamp(base_time);
-  const double time_offset = prediction_sample_interval_s_ * static_cast<double>(sample_index + 1);
+  const double time_offset = output_sample_interval_ * static_cast<double>(sample_index + 1);
   const rclcpp::Time future_stamp = stamp + rclcpp::Duration::from_seconds(time_offset);
   const int64_t future_nanoseconds = future_stamp.nanoseconds();
   state.header.stamp.sec = static_cast<int32_t>(future_nanoseconds / 1000000000);

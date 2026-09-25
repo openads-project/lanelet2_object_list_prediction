@@ -321,85 +321,65 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    */
   std::unique_ptr<Lanelet2MapInterface> ll2_interface_;
 
-  /**
-   * @brief Name of lanelet2_map_server node (parameter)
-   */
-  std::string ll2_map_server_name_ = "lanelet2_map_server";
+  /** Timeout for considering ego vehicle data [s]. */
+  double input_ego_data_timeout_ = 1.0;
 
-  /**
-   * @brief Maximum object-to-lanelet matching distance in meters (parameter)
-   */
-  double lanelet_match_max_distance_m_ = 0.5;
+  /** Name of lanelet2_map_server node. */
+  std::string processing_map_matching_ll2_map_server_name_ = "lanelet2_map_server";
 
-  /**
-   * @brief Maximum yaw difference for accepting a lanelet match in radians
-   * (parameter)
-   */
-  double lanelet_match_max_yaw_diff_rad_ = 1.57079632679;
+  /** Max distance from a lanelet to consider it a match [m]. */
+  double processing_map_matching_max_distance_ = 0.5;
 
-  /**
-   * @brief Prediction horizon in seconds (parameter)
-   */
-  double prediction_horizon_s_ = 5.0;
+  /** Max yaw difference from a lanelet direction to consider it a match [deg]. */
+  double processing_map_matching_max_delta_yaw_deg_ = 90.0;
 
-  /**
-   * @brief Sampling interval of predicted states in seconds (parameter)
-   */
-  double prediction_sample_interval_s_ = 0.5;
+  /** Fallback mode for objects not matched to map [kinematic|static]. */
+  std::string processing_map_matching_fallback_mode_ = "kinematic";
 
-  /**
-   * @brief Maximum lateral acceleration used to limit speed on curved map paths
-   * (parameter)
-   */
-  double max_lateral_acceleration_mps2_ = 2.5;
-  bool roundabout_initial_alignment_enabled_ = true;
-  double roundabout_initial_alignment_tolerance_m_ = 1.0;
+  /** Enable kinematic limitations. */
+  bool processing_kinematic_limitations_enable_ = true;
 
-  /**
-   * @brief Maximum longitudinal deceleration magnitude used to approach curve
-   * speed limits (parameter)
-   */
-  double max_longitudinal_deceleration_mps2_ = 2.0;
+  /** Max lateral acceleration for predictions [m/s^2]. */
+  double processing_kinematic_limitations_max_lateral_acceleration_ = 2.5;
 
-  /**
-   * @brief Maximum longitudinal acceleration used to return to the observed
-   * speed after curves (parameter)
-   */
-  double max_longitudinal_acceleration_mps2_ = 1.0;
+  /** Max longitudinal deceleration for predictions [m/s^2]. */
+  double processing_kinematic_limitations_max_longitudinal_deceleration_ = 2.0;
 
-  /**
-   * @brief Probability assigned to each kinematically infeasible route when
-   * feasible alternatives exist (parameter)
-   */
-  double infeasible_hypothesis_probability_ = 0.01;
+  /** Max longitudinal acceleration for predictions [m/s^2]. */
+  double processing_kinematic_limitations_max_longitudinal_acceleration_ = 1.0;
 
-  /** Enable right-of-way-aware interaction prediction (parameter). */
-  bool yield_prediction_enabled_ = true;
+  /** Enable yielding. */
+  bool processing_yielding_enable_ = true;
 
-  /** Enable longitudinal following of ego and other objects (parameter). */
-  bool following_prediction_enabled_ = true;
+  /** Clearance between front and yield line [m]. */
+  double processing_yielding_clearance_distance_ = 0.5;
 
-  /** Minimum bumper-to-bumper following gap in meters (parameter). */
-  double following_min_gap_m_ = 2.0;
+  /** Time to wait after priority traffic has cleared [s]. */
+  double processing_yielding_clearance_time_ = 1.0;
 
-  /** Speed-dependent following headway in seconds (parameter). */
-  double following_time_headway_s_ = 1.0;
+  /** Enable following, avoiding collisions with leading objects. */
+  bool processing_following_enable_ = true;
 
-  /** Clearance between the object front and the yield line in meters
-   * (parameter). */
-  double yield_stop_margin_m_ = 0.5;
+  /** Min distance to the leading object [m]. */
+  double processing_following_headway_distance_ = 2.0;
 
-  /** Time to wait after priority traffic clears in seconds (parameter). */
-  double yield_clearance_time_s_ = 1.0;
+  /** Min time headway to the leading object [s]. */
+  double processing_following_headway_time_ = 1.0;
 
-  /** Maximum accepted ego-data age in seconds (parameter). */
-  double ego_data_timeout_s_ = 1.0;
+  /** Enable special roundabout handling. */
+  bool processing_roundabout_enable_ = true;
 
-  /**
-   * @brief Prediction mode for unmatched objects: "static" or "kinematic"
-   * (parameter)
-   */
-  std::string unmatched_object_prediction_mode_ = "kinematic";
+  /** Tolerance for initial alignment with roundabout centerline, not respecting kinematic limitations [m]. */
+  double processing_roundabout_initial_alignment_tolerance_ = 1.0;
+
+  /** Prediction time horizon [s]. */
+  double output_prediction_horizon_ = 5.0;
+
+  /** Time interval between prediction samples [s]. */
+  double output_sample_interval_ = 0.5;
+
+  /** Probability for infeasible hypotheses. */
+  double output_infeasible_hypothesis_probability_ = 0.0;
 
   /**
    * @brief Lanelet2 routing graph
