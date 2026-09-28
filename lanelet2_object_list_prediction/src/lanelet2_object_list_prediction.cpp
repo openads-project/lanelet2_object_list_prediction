@@ -55,16 +55,19 @@ bool isMotorcycleClass(uint8_t type) { return type == perception_msgs::msg::Obje
 
 bool isPedestrianLane(const lanelet::ConstLanelet& lanelet) {
   const auto subtype = lanelet.attributeOr(lanelet::AttributeName::Subtype, std::string{});
-  return subtype == lanelet::AttributeValueString::Walkway || subtype == lanelet::AttributeValueString::SharedWalkway ||
-         subtype == lanelet::AttributeValueString::Crosswalk;
+  return subtype == static_cast<const char*>(lanelet::AttributeValueString::Walkway) ||
+         subtype == static_cast<const char*>(lanelet::AttributeValueString::SharedWalkway) ||
+         subtype == static_cast<const char*>(lanelet::AttributeValueString::Crosswalk);
 }
 
 bool isBicycleLane(const lanelet::ConstLanelet& lanelet) {
-  return lanelet.attributeOr(lanelet::AttributeName::Subtype, std::string{}) == lanelet::AttributeValueString::BicycleLane;
+  return lanelet.attributeOr(lanelet::AttributeName::Subtype, std::string{}) ==
+         static_cast<const char*>(lanelet::AttributeValueString::BicycleLane);
 }
 
 bool isRoundabout(const lanelet::ConstLanelet& lanelet) {
-  return lanelet.attributeOr("intersection_type", std::string{}) == "roundabout";
+  return lanelet.attributeOr(static_cast<const char*>("intersection_type"), std::string{}) ==
+         static_cast<const char*>("roundabout");
 }
 
 struct LaneletVelocity {
@@ -952,17 +955,22 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       // The German rules provide vehicle, bicycle and pedestrian participants.
       // Motorcycles may be observed on either road or bicycle lanes; use the
       // bicycle graph only for dedicated bicycle lanes, avoiding duplicate road matches.
-      const PredictionParticipant participant = (bicycle || (motorcycle && isBicycleLane(matched_lanelet)))
-                                                    ? PredictionParticipant::Bicycle
-                                                : pedestrian ? PredictionParticipant::Pedestrian
-                                                             : PredictionParticipant::Vehicle;
-      const auto* matching_rules = participant == PredictionParticipant::Bicycle      ? bicycle_traffic_rules_.get()
-                                   : participant == PredictionParticipant::Pedestrian ? pedestrian_traffic_rules_.get()
-                                                                                      : traffic_rules_.get();
+      PredictionParticipant participant = PredictionParticipant::Vehicle;
+      if (bicycle || (motorcycle && isBicycleLane(matched_lanelet))) {
+        participant = PredictionParticipant::Bicycle;
+      } else if (pedestrian) {
+        participant = PredictionParticipant::Pedestrian;
+      }
+      const auto* matching_rules = traffic_rules_.get();
+      if (participant == PredictionParticipant::Bicycle) {
+        matching_rules = bicycle_traffic_rules_.get();
+      } else if (participant == PredictionParticipant::Pedestrian) {
+        matching_rules = pedestrian_traffic_rules_.get();
+      }
       if (matching_rules == nullptr || !matching_rules->canPass(matched_lanelet) ||
           (classification.type == perception_msgs::msg::ObjectClassification::VRU &&
            matched_lanelet.attributeOr(lanelet::AttributeName::Subtype, std::string{}) ==
-               lanelet::AttributeValueString::Stairs)) {
+               static_cast<const char*>(lanelet::AttributeValueString::Stairs))) {
         continue;
       }
 
@@ -1047,9 +1055,12 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
   prediction_object.hypotheses.clear();
   const auto classification = perception_msgs::object_access::getClassWithHighestProbability(prediction_object.object);
   for (const LaneletMatch& match : prediction_object.lanelet_matches) {
-    const auto* routing_graph = match.participant == PredictionParticipant::Bicycle      ? bicycle_routing_graph_.get()
-                                : match.participant == PredictionParticipant::Pedestrian ? pedestrian_routing_graph_.get()
-                                                                                         : routing_graph_.get();
+    const auto* routing_graph = routing_graph_.get();
+    if (match.participant == PredictionParticipant::Bicycle) {
+      routing_graph = bicycle_routing_graph_.get();
+    } else if (match.participant == PredictionParticipant::Pedestrian) {
+      routing_graph = pedestrian_routing_graph_.get();
+    }
     if (routing_graph == nullptr) continue;
     const double speed = match.longitudinal_speed;
     const double max_travel_distance = speed * output_prediction_horizon_;
@@ -1226,9 +1237,12 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
 
     for (std::size_t hypothesis_index = 0; hypothesis_index < prediction_object.hypotheses.size(); ++hypothesis_index) {
       const PredictionObject::Hypothesis& hypothesis = prediction_object.hypotheses[hypothesis_index];
-      const auto* routing_graph = hypothesis.participant == PredictionParticipant::Bicycle      ? bicycle_routing_graph_.get()
-                                  : hypothesis.participant == PredictionParticipant::Pedestrian ? pedestrian_routing_graph_.get()
-                                                                                                : routing_graph_.get();
+      const auto* routing_graph = routing_graph_.get();
+      if (hypothesis.participant == PredictionParticipant::Bicycle) {
+        routing_graph = bicycle_routing_graph_.get();
+      } else if (hypothesis.participant == PredictionParticipant::Pedestrian) {
+        routing_graph = pedestrian_routing_graph_.get();
+      }
       if (hypothesis.reversing) continue;
       std::optional<YieldConstraint> selected_constraint;
       auto evaluateRule = [&](const lanelet::ConstLanelet& regulating_lanelet, std::size_t route_index,
