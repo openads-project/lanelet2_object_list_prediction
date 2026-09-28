@@ -51,14 +51,11 @@ bool isPedestrianClass(uint8_t type) {
          type == perception_msgs::msg::ObjectClassification::VRU;
 }
 
-bool isMotorcycleClass(uint8_t type) {
-  return type == perception_msgs::msg::ObjectClassification::MOTORCYCLE;
-}
+bool isMotorcycleClass(uint8_t type) { return type == perception_msgs::msg::ObjectClassification::MOTORCYCLE; }
 
 bool isPedestrianLane(const lanelet::ConstLanelet& lanelet) {
   const auto subtype = lanelet.attributeOr(lanelet::AttributeName::Subtype, std::string{});
-  return subtype == lanelet::AttributeValueString::Walkway ||
-         subtype == lanelet::AttributeValueString::SharedWalkway ||
+  return subtype == lanelet::AttributeValueString::Walkway || subtype == lanelet::AttributeValueString::SharedWalkway ||
          subtype == lanelet::AttributeValueString::Crosswalk;
 }
 
@@ -94,9 +91,9 @@ bool initialMotionFeasible(const geometry_msgs::msg::Point& observed_position,
   const double acceleration_y = (predicted_position.y - observed_position.y - observed_velocity.y * sample_interval) * scale;
   const double speed = std::hypot(observed_velocity.x, observed_velocity.y);
   if (speed <= kMotionDirectionMinSpeedMps) {
-    const double excess = std::max(0.0, std::hypot(acceleration_x, acceleration_y) -
-                                           std::max({max_lateral_acceleration, max_longitudinal_acceleration,
-                                                     max_longitudinal_deceleration}));
+    const double excess =
+        std::max(0.0, std::hypot(acceleration_x, acceleration_y) -
+                          std::max({max_lateral_acceleration, max_longitudinal_acceleration, max_longitudinal_deceleration}));
     return excess / scale <= alignment_tolerance + kKinematicEpsilon;
   }
   const double longitudinal = (acceleration_x * observed_velocity.x + acceleration_y * observed_velocity.y) / speed;
@@ -608,8 +605,7 @@ FollowingStepResult advanceFollowingStep(const RouteMotionSample& previous,
   const double speed = std::clamp(speed_limit, minimum_speed, maximum_speed);
   const double distance = std::min(route_length, previous.distance + 0.5 * (previous.speed + speed) * dt);
   return {{distance, speed, next_time},
-          distance + headway * speed <= leader_distance_limit + 1e-3 &&
-              distance <= nominal_distance + 1e-3};
+          distance + headway * speed <= leader_distance_limit + 1e-3 && distance <= nominal_distance + 1e-3};
 }
 
 bool isEgoDataTimestampUsable(double ego_age, double timeout) { return std::abs(ego_age) <= timeout + kKinematicEpsilon; }
@@ -956,12 +952,13 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       // The German rules provide vehicle, bicycle and pedestrian participants.
       // Motorcycles may be observed on either road or bicycle lanes; use the
       // bicycle graph only for dedicated bicycle lanes, avoiding duplicate road matches.
-      const PredictionParticipant participant =
-          (bicycle || (motorcycle && isBicycleLane(matched_lanelet))) ? PredictionParticipant::Bicycle
-          : pedestrian ? PredictionParticipant::Pedestrian : PredictionParticipant::Vehicle;
-      const auto* matching_rules = participant == PredictionParticipant::Bicycle ? bicycle_traffic_rules_.get()
+      const PredictionParticipant participant = (bicycle || (motorcycle && isBicycleLane(matched_lanelet)))
+                                                    ? PredictionParticipant::Bicycle
+                                                : pedestrian ? PredictionParticipant::Pedestrian
+                                                             : PredictionParticipant::Vehicle;
+      const auto* matching_rules = participant == PredictionParticipant::Bicycle      ? bicycle_traffic_rules_.get()
                                    : participant == PredictionParticipant::Pedestrian ? pedestrian_traffic_rules_.get()
-                                                                                        : traffic_rules_.get();
+                                                                                      : traffic_rules_.get();
       if (matching_rules == nullptr || !matching_rules->canPass(matched_lanelet) ||
           (classification.type == perception_msgs::msg::ObjectClassification::VRU &&
            matched_lanelet.attributeOr(lanelet::AttributeName::Subtype, std::string{}) ==
@@ -982,10 +979,9 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       }
       const double centerline_distance =
           std::abs(lanelet::geometry::toArcCoordinates(matched_lanelet.centerline2d(), position_2d).distance);
-      prediction_object.lanelet_matches.push_back(
-          LaneletMatch{matched_lanelet, participant, candidate_lanelet.first, centerline_distance, start_arc_length,
-                       orientation_difference, reversing, std::abs(lane_velocity.longitudinal),
-                       reversing ? -lane_velocity.lateral : lane_velocity.lateral});
+      prediction_object.lanelet_matches.push_back(LaneletMatch{
+          matched_lanelet, participant, candidate_lanelet.first, centerline_distance, start_arc_length, orientation_difference,
+          reversing, std::abs(lane_velocity.longitudinal), reversing ? -lane_velocity.lateral : lane_velocity.lateral});
     }
 
     // Bicycle and pedestrian rules also permit some shared or road lanelets.
@@ -996,9 +992,9 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       };
       auto& matches = prediction_object.lanelet_matches;
       if (std::any_of(matches.begin(), matches.end(), preferred)) {
-        matches.erase(std::remove_if(matches.begin(), matches.end(),
-                                     [&](const LaneletMatch& match) { return !preferred(match); }),
-                      matches.end());
+        matches.erase(
+            std::remove_if(matches.begin(), matches.end(), [&](const LaneletMatch& match) { return !preferred(match); }),
+            matches.end());
       }
     }
 
@@ -1051,9 +1047,9 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
   prediction_object.hypotheses.clear();
   const auto classification = perception_msgs::object_access::getClassWithHighestProbability(prediction_object.object);
   for (const LaneletMatch& match : prediction_object.lanelet_matches) {
-    const auto* routing_graph = match.participant == PredictionParticipant::Bicycle ? bicycle_routing_graph_.get()
+    const auto* routing_graph = match.participant == PredictionParticipant::Bicycle      ? bicycle_routing_graph_.get()
                                 : match.participant == PredictionParticipant::Pedestrian ? pedestrian_routing_graph_.get()
-                                                                                           : routing_graph_.get();
+                                                                                         : routing_graph_.get();
     if (routing_graph == nullptr) continue;
     const double speed = match.longitudinal_speed;
     const double max_travel_distance = speed * output_prediction_horizon_;
@@ -1147,19 +1143,17 @@ void Lanelet2ObjectListPrediction::finalizeMapBasedPredictions(PredictionObject&
                                              [](const PredictionObject::Hypothesis& hypothesis) { return hypothesis.feasible; }));
   const std::size_t infeasible_count = prediction_object.hypotheses.size() - feasible_count;
   if (feasible_count > 0) {
-    const double infeasible_probability =
-        infeasible_count > 0 ? std::min(output_infeasible_hypothesis_probability_, 1.0 / static_cast<double>(infeasible_count + 1))
-                             : 0.0;
-    const double feasible_weight = std::accumulate(
-        prediction_object.hypotheses.begin(), prediction_object.hypotheses.end(), 0.0,
-        [](double weight, const PredictionObject::Hypothesis& hypothesis) {
-          return weight + (hypothesis.feasible ? hypothesis.match_weight : 0.0);
-        });
+    const double infeasible_probability = infeasible_count > 0 ? std::min(output_infeasible_hypothesis_probability_,
+                                                                          1.0 / static_cast<double>(infeasible_count + 1))
+                                                               : 0.0;
+    const double feasible_weight = std::accumulate(prediction_object.hypotheses.begin(), prediction_object.hypotheses.end(), 0.0,
+                                                   [](double weight, const PredictionObject::Hypothesis& hypothesis) {
+                                                     return weight + (hypothesis.feasible ? hypothesis.match_weight : 0.0);
+                                                   });
     const double feasible_probability_mass = 1.0 - infeasible_probability * static_cast<double>(infeasible_count);
     for (PredictionObject::Hypothesis& hypothesis : prediction_object.hypotheses) {
-      hypothesis.prediction.probability = hypothesis.feasible
-                                              ? feasible_probability_mass * hypothesis.match_weight / feasible_weight
-                                              : infeasible_probability;
+      hypothesis.prediction.probability =
+          hypothesis.feasible ? feasible_probability_mass * hypothesis.match_weight / feasible_weight : infeasible_probability;
     }
   } else if (!prediction_object.hypotheses.empty()) {
     const double probability = 1.0 / static_cast<double>(prediction_object.hypotheses.size());
@@ -1232,9 +1226,9 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
 
     for (std::size_t hypothesis_index = 0; hypothesis_index < prediction_object.hypotheses.size(); ++hypothesis_index) {
       const PredictionObject::Hypothesis& hypothesis = prediction_object.hypotheses[hypothesis_index];
-      const auto* routing_graph = hypothesis.participant == PredictionParticipant::Bicycle ? bicycle_routing_graph_.get()
+      const auto* routing_graph = hypothesis.participant == PredictionParticipant::Bicycle      ? bicycle_routing_graph_.get()
                                   : hypothesis.participant == PredictionParticipant::Pedestrian ? pedestrian_routing_graph_.get()
-                                                                                                  : routing_graph_.get();
+                                                                                                : routing_graph_.get();
       if (hypothesis.reversing) continue;
       std::optional<YieldConstraint> selected_constraint;
       auto evaluateRule = [&](const lanelet::ConstLanelet& regulating_lanelet, std::size_t route_index,
@@ -1290,7 +1284,8 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
           const std::optional<TimeInterval> ego_interval =
               ego_data ? egoRouteOccupancy(*ego_data, base_stamp, output_prediction_horizon_, priority_lanelets, conflict_lanelet)
                        : std::nullopt;
-          if (ego_interval.has_value() && conflictsDuringClearance(yielding_interval, *ego_interval, processing_yielding_clearance_time_)) {
+          if (ego_interval.has_value() &&
+              conflictsDuringClearance(yielding_interval, *ego_interval, processing_yielding_clearance_time_)) {
             latest_clearance =
                 std::max(latest_clearance, std::isfinite(ego_interval->exit) ? ego_interval->exit : output_prediction_horizon_);
           }
@@ -1303,8 +1298,9 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
                   routeOccupancy(priority_hypothesis, priority_lanelet_ids, conflict_lanelet);
               if (priority_interval.has_value() &&
                   conflictsDuringClearance(yielding_interval, *priority_interval, processing_yielding_clearance_time_)) {
-                latest_clearance = std::max(
-                    latest_clearance, std::isfinite(priority_interval->exit) ? priority_interval->exit : output_prediction_horizon_);
+                latest_clearance =
+                    std::max(latest_clearance,
+                             std::isfinite(priority_interval->exit) ? priority_interval->exit : output_prediction_horizon_);
               }
             }
           }
@@ -1356,7 +1352,8 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
 }
 
 void Lanelet2ObjectListPrediction::applyFollowingInteractions(
-    std::vector<PredictionObject>& prediction_objects, const builtin_interfaces::msg::Time& base_time,
+    std::vector<PredictionObject>& prediction_objects,
+    const builtin_interfaces::msg::Time& base_time,
     const std::optional<perception_msgs::msg::EgoData>& ego_data) const {
   const rclcpp::Time base_stamp(base_time);
   std::vector<TimedRoutePose> ego_poses;
@@ -1366,8 +1363,8 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
         const auto position = perception_msgs::object_access::getPosition(state);
         const double time = (rclcpp::Time(state.header.stamp) - base_stamp).seconds();
         if (std::isfinite(time) && std::isfinite(position.x) && std::isfinite(position.y)) {
-          ego_poses.push_back({time, lanelet::BasicPoint2d(position.x, position.y),
-                               perception_msgs::object_access::getYaw(state)});
+          ego_poses.push_back(
+              {time, lanelet::BasicPoint2d(position.x, position.y), perception_msgs::object_access::getYaw(state)});
         }
       } catch (const std::exception&) {
       }
@@ -1390,9 +1387,8 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
   std::vector<std::pair<double, double>> object_offsets;
   object_offsets.reserve(prediction_objects.size());
   for (const PredictionObject& object : prediction_objects) object_offsets.push_back(offsets(object.object));
-  const double ego_rear = ego_data ? ego_data->state.reference_point.translation_to_geometric_center.x -
-                                         0.5 * ego_data->length
-                                   : 0.0;
+  const double ego_rear =
+      ego_data ? ego_data->state.reference_point.translation_to_geometric_center.x - 0.5 * ego_data->length : 0.0;
   const double step_size = std::min(0.1, output_sample_interval_);
   std::vector<std::vector<std::optional<RouteMotionProfile>>> results(prediction_objects.size());
   for (std::size_t object_index = 0; object_index < prediction_objects.size(); ++object_index) {
@@ -1422,13 +1418,13 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
         auto consider = [&](const lanelet::BasicPoint2d& position_now, const lanelet::BasicPoint2d& position_next,
                             double yaw_next, double leader_speed, double leader_rear,
                             const std::optional<lanelet::Id>& lanelet_id) {
-          const auto projected_next = projectLeaderOnRoute(follower.route, follower.start_arc_length, position_next,
-                                                            yaw_next, lanelet_id);
+          const auto projected_next =
+              projectLeaderOnRoute(follower.route, follower.start_arc_length, position_next, yaw_next, lanelet_id);
           if (!projected_next || *projected_next <= previous.distance + kKinematicEpsilon) return;
-          const auto projected_now = projectLeaderOnRoute(follower.route, follower.start_arc_length, position_now,
-                                                           yaw_next, lanelet_id);
-          const double gap = (projected_now ? *projected_now : *projected_next) + leader_rear -
-                             previous.distance - follower_front;
+          const auto projected_now =
+              projectLeaderOnRoute(follower.route, follower.start_arc_length, position_now, yaw_next, lanelet_id);
+          const double gap =
+              (projected_now ? *projected_now : *projected_next) + leader_rear - previous.distance - follower_front;
           const double clearance = *projected_next + leader_rear - follower_front - processing_following_headway_distance_;
           distance_limit = std::min(distance_limit, clearance);
           const double available_braking_distance =
@@ -1462,8 +1458,8 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
                                      ? std::atan2(velocity.y, velocity.x)
                                      : perception_msgs::object_access::getYaw(leader_object.object);
               const lanelet::BasicPoint2d start(position.x, position.y);
-              const lanelet::BasicPoint2d step = speed > 0.0 ? lanelet::BasicPoint2d(velocity.x, velocity.y)
-                                                              : lanelet::BasicPoint2d(0.0, 0.0);
+              const lanelet::BasicPoint2d step =
+                  speed > 0.0 ? lanelet::BasicPoint2d(velocity.x, velocity.y) : lanelet::BasicPoint2d(0.0, 0.0);
               consider(start + time * step, start + next_time * step, yaw, speed, leader_rear, std::nullopt);
             } catch (const std::exception&) {
             }
@@ -1473,13 +1469,12 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
             if (leader.reversing || leader.route.empty() || leader.motion_profile.empty() || !leader.feasible) continue;
             const RouteMotionSample now = sampleRouteMotionAtTime(leader.motion_profile, time);
             const RouteMotionSample next = sampleRouteMotionAtTime(leader.motion_profile, next_time);
-            const auto [lanelet_index, arc_length] =
-                laneletAtRouteDistance(leader.route, leader.start_arc_length, next.distance);
+            const auto [lanelet_index, arc_length] = laneletAtRouteDistance(leader.route, leader.start_arc_length, next.distance);
             const lanelet::ConstLanelet& lanelet = leader.route[lanelet_index];
             const double yaw = computeLaneletYawAtArcLength(lanelet, arc_length);
             consider(pointOnRoute(leader.route, leader.start_arc_length, now.distance),
-                     lanelet::geometry::interpolatedPointAtDistance(lanelet.centerline2d(), arc_length),
-                     yaw, next.speed, leader_rear, lanelet.id());
+                     lanelet::geometry::interpolatedPointAtDistance(lanelet.centerline2d(), arc_length), yaw, next.speed,
+                     leader_rear, lanelet.id());
           }
         }
 

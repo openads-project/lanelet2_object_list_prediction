@@ -232,7 +232,7 @@ TEST(FollowingInteraction, BrakesContinuouslyBeforeAStationaryLeader) {
     const double braking_speed = std::sqrt(4.0 * available);
     const double position_speed = (leader_clearance - follower.distance - 0.05 * follower.speed) / 1.05;
     const auto step = advanceFollowingStep(follower, time, 100.0, std::min({4.0, braking_speed, position_speed}),
-                                            leader_clearance, 1.0, 4.0, 1.0, 2.0, 100.0);
+                                           leader_clearance, 1.0, 4.0, 1.0, 2.0, 100.0);
     EXPECT_TRUE(step.feasible);
     EXPECT_GE(step.sample.distance, follower.distance);
     EXPECT_GE(step.sample.speed, follower.speed - 0.2 - 1e-6);
@@ -245,8 +245,8 @@ TEST(FollowingInteraction, BrakesContinuouslyBeforeAStationaryLeader) {
 TEST(FollowingInteraction, AcceleratesAfterLeaderLeavesTheRoute) {
   RouteMotionSample follower{3.0, 0.0, 0.0};
   for (int step_index = 1; step_index <= 50; ++step_index) {
-    const auto step = advanceFollowingStep(follower, 0.1 * step_index, 100.0, 4.0,
-                                            std::numeric_limits<double>::infinity(), 1.0, 4.0, 1.0, 2.0, 100.0);
+    const auto step = advanceFollowingStep(follower, 0.1 * step_index, 100.0, 4.0, std::numeric_limits<double>::infinity(), 1.0,
+                                           4.0, 1.0, 2.0, 100.0);
     ASSERT_TRUE(step.feasible);
     EXPECT_LE(step.sample.speed - follower.speed, 0.1 + 1e-6);
     follower = step.sample;
