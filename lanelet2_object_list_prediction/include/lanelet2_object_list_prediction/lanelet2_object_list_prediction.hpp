@@ -384,6 +384,9 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   /** Max yaw difference from a lanelet direction to consider it a match [deg]. */
   double processing_map_matching_max_delta_yaw_deg_ = 90.0;
 
+  /** Prefer a valid bicycle lane over vehicle lanes for motorcycles. */
+  bool processing_map_matching_prefer_bicycle_lanes_for_motorcycles_ = true;
+
   /** Fallback mode for objects not matched to map [kinematic|static]. */
   std::string processing_map_matching_fallback_mode_ = "kinematic";
 

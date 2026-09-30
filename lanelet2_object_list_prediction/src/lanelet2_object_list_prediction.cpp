@@ -816,6 +816,9 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
   this->declareAndLoadParameter("processing.map_matching.max_delta_yaw_deg", processing_map_matching_max_delta_yaw_deg_,
                                 "max yaw difference from a lanelet direction to consider it a match [deg]", true, false, false,
                                 0.0, 180.0);
+  this->declareAndLoadParameter("processing.map_matching.prefer_bicycle_lanes_for_motorcycles",
+                                processing_map_matching_prefer_bicycle_lanes_for_motorcycles_,
+                                "prefer valid bicycle lane matches over vehicle lanes for motorcycles");
   this->declareAndLoadParameter("processing.map_matching.fallback_mode", processing_map_matching_fallback_mode_,
                                 "fallback mode for objects not matched to map [kinematic|static]", true, false, false,
                                 std::nullopt, std::nullopt, std::nullopt, "Allowed values: static, kinematic");
@@ -1227,11 +1230,10 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
                     matches.end());
     }
 
-    // Bicycle and pedestrian rules also permit some shared or road lanelets.
-    // Prefer dedicated space when it is a valid nearby match.
-    if (bicycle || pedestrian) {
+    // Prefer dedicated space only after a valid lanelet match survives the matching checks.
+    if (bicycle || pedestrian || (motorcycle && processing_map_matching_prefer_bicycle_lanes_for_motorcycles_)) {
       const auto preferred = [&](const LaneletMatch& match) {
-        return bicycle ? isBicycleLane(match.lanelet) : isPedestrianLane(match.lanelet);
+        return pedestrian ? isPedestrianLane(match.lanelet) : isBicycleLane(match.lanelet);
       };
       if (std::any_of(matches.begin(), matches.end(), preferred)) {
         matches.erase(
