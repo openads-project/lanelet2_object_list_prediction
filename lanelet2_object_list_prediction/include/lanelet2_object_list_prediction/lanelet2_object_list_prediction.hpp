@@ -6,9 +6,11 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <lanelet2_routing/Forward.h>
+#include <lanelet2_routing/LaneletPath.h>
 #include <lanelet2_routing/RoutingGraph.h>
 #include <lanelet2_traffic_rules/TrafficRules.h>
 #include <tf2_ros/buffer.h>
@@ -38,6 +40,44 @@ struct RouteMotionSample {
 struct RouteMotionProfile {
   std::vector<RouteMotionSample> samples;
   bool feasible{true};
+};
+
+/**
+ * Heading-filtered geometry of a route, starting at the object. Travel distances
+ * are relative to the object; heading samples may reach behind it on the first
+ * lanelet. Headings are cached per distance and the centerline is integrated
+ * once per route and extended on demand, because profiles and predicted states
+ * query the same distances many times.
+ */
+class SmoothedRoute {
+ public:
+  SmoothedRoute(lanelet::routing::LaneletPath route, double start_arc_length);
+
+  bool empty() const { return route_.empty(); }
+  double length() const { return length_; }
+  /** Median-filtered route heading at a travel distance. */
+  double yaw(double travel_distance) const;
+  /** Filtered heading change per distance across the curvature baseline. */
+  double curvature(double travel_distance) const;
+  /** Filtered centerline point at a travel distance, clamped to the route. */
+  lanelet::BasicPoint2d point(double travel_distance) const;
+  /** Point whose initial lateral offset converges onto the filtered centerline. */
+  lanelet::BasicPoint2d convergingPoint(double travel_distance,
+                                        double initial_lateral_offset,
+                                        double convergence_distance,
+                                        double initial_slope = 0.0) const;
+
+ private:
+  /** Unfiltered centerline heading at a travel distance. */
+  double rawYaw(double travel_distance) const;
+
+  lanelet::routing::LaneletPath route_;
+  double start_arc_length_{0.0};
+  double length_{0.0};
+  mutable std::unordered_map<double, double> raw_yaws_;
+  mutable std::unordered_map<double, double> yaws_;
+  // Filtered centerline at multiples of the profile resolution, extended lazily
+  mutable std::vector<lanelet::BasicPoint2d> grid_points_;
 };
 
 enum class PredictionParticipant { Vehicle, Bicycle, Pedestrian };
@@ -232,9 +272,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Samples one predicted state along a lanelet route
    *
    * @param base_state current object state used as template
-   * @param route lanelet route to sample
-   * @param start_arc_length current object position along the first route
-   * lanelet
+   * @param route smoothed lanelet route starting at the object
    * @param travel_distance distance to travel along the route from the current
    * position
    * @param speed longitudinal speed at the sampled position
@@ -246,8 +284,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @return predicted object state at the requested sample
    */
   perception_msgs::msg::ObjectState sampleStateOnLaneletRoute(const perception_msgs::msg::ObjectState& base_state,
-                                                              const lanelet::routing::LaneletPath& route,
-                                                              double start_arc_length,
+                                                              const SmoothedRoute& route,
                                                               double travel_distance,
                                                               double speed,
                                                               double initial_speed,

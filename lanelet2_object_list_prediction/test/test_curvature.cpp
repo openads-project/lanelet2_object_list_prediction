@@ -52,10 +52,10 @@ lanelet::routing::LaneletPath makeQuarterTurnRoute(bool left) {
 }
 
 double maximumRouteCurvature(const lanelet::routing::LaneletPath& route) {
-  const double route_length = remainingRouteLength(route, 0.0);
+  const SmoothedRoute smoothed_route(route, 0.0);
   double maximum_curvature = 0.0;
-  for (double distance = 0.0; distance <= route_length; distance += 0.25) {
-    maximum_curvature = std::max(maximum_curvature, routeCurvature(route, 0.0, route_length, distance));
+  for (double distance = 0.0; distance <= smoothed_route.length(); distance += 0.25) {
+    maximum_curvature = std::max(maximum_curvature, smoothed_route.curvature(distance));
   }
   return maximum_curvature;
 }
@@ -65,9 +65,8 @@ TEST(RouteCurvature, SuppressesIsolatedLaneletBoundaryKink) {
   lanelet::Lanelet first = makeLaneletWithCenterline(1, {{0.0, 0.0}, {10.0, 0.0}});
   lanelet::Lanelet second = makeLaneletWithCenterline(2, {{10.0, 0.0}, {20.0, 10.0 * std::tan(kink_angle)}});
   const lanelet::routing::LaneletPath route({first, second});
-  const double route_length = remainingRouteLength(route, 0.0);
 
-  EXPECT_LT(routeCurvature(route, 0.0, route_length, 10.0), 2.5 / (13.0 * 13.0));
+  EXPECT_LT(SmoothedRoute(route, 0.0).curvature(10.0), 2.5 / (13.0 * 13.0));
   EXPECT_TRUE(buildRouteMotionProfile(route, 0.0, 13.0, 2.5, 1.0, 2.0, false).feasible);
 }
 
@@ -77,9 +76,8 @@ TEST(RouteCurvature, SuppressesLaneletBoundaryKinkAtUrbanSpeed) {
   lanelet::Lanelet first = makeLaneletWithCenterline(8, {{0.0, 0.0}, {20.0, 0.0}});
   lanelet::Lanelet second = makeLaneletWithCenterline(9, {{20.0, 0.0}, {40.0, 20.0 * std::tan(kink_angle)}});
   const lanelet::routing::LaneletPath route({first, second});
-  const double route_length = remainingRouteLength(route, 0.0);
 
-  EXPECT_LT(routeCurvature(route, 0.0, route_length, 20.0), 3.0 / (15.0 * 15.0));
+  EXPECT_LT(SmoothedRoute(route, 0.0).curvature(20.0), 3.0 / (15.0 * 15.0));
   EXPECT_TRUE(buildRouteMotionProfile(route, 0.0, 15.0, 3.0, 1.0, 2.0, false).feasible);
 }
 
@@ -91,7 +89,7 @@ TEST(RouteCurvature, SuppressesShortLateralCenterlineStep) {
   const double route_length = remainingRouteLength(route, 0.0);
 
   EXPECT_TRUE(buildRouteMotionProfile(route, 0.0, 13.0, 2.5, 1.0, 2.0, false).feasible);
-  EXPECT_NEAR(smoothedPointOnRoute(route, 0.0, route_length, route_length).y(), 0.0, 0.2);
+  EXPECT_NEAR(SmoothedRoute(route, 0.0).point(route_length).y(), 0.0, 0.2);
 }
 
 TEST(RouteCurvature, PreservesSustainedCurve) {
@@ -106,10 +104,9 @@ TEST(RouteCurvature, PreservesSustainedCurve) {
   lanelet::Lanelet approach = makeLaneletWithCenterline(lanelet::utils::getId(), {{-20.0, -radius}, {0.0, -radius}});
   lanelet::Lanelet exit = makeLaneletWithCenterline(lanelet::utils::getId(), {{radius, 0.0}, {radius, 20.0}});
   const lanelet::routing::LaneletPath route({approach, curve, exit});
-  const double route_length = remainingRouteLength(route, 0.0);
   const double curve_middle = 20.0 + 0.25 * M_PI * radius;
 
-  EXPECT_NEAR(routeCurvature(route, 0.0, route_length, curve_middle), 1.0 / radius, 0.005);
+  EXPECT_NEAR(SmoothedRoute(route, 0.0).curvature(curve_middle), 1.0 / radius, 0.005);
 }
 
 TEST(RouteCurvature, PreservesShortLeftAndRightTurns) {
@@ -117,12 +114,13 @@ TEST(RouteCurvature, PreservesShortLeftAndRightTurns) {
     const lanelet::routing::LaneletPath route = makeQuarterTurnRoute(left);
     const double route_length = remainingRouteLength(route, 0.0);
     const lanelet::BasicPoint2d raw_end = pointOnRoute(route, 0.0, route_length);
-    const lanelet::BasicPoint2d smoothed_end = smoothedPointOnRoute(route, 0.0, route_length, route_length);
+    const SmoothedRoute smoothed_route(route, 0.0);
+    const lanelet::BasicPoint2d smoothed_end = smoothed_route.point(route_length);
 
     EXPECT_GT(maximumRouteCurvature(route), 0.05);
     EXPECT_FALSE(buildRouteMotionProfile(route, 0.0, 13.0, 2.5, 1.0, 2.0, false).feasible);
     EXPECT_LT((smoothed_end - raw_end).norm(), 2.0);
-    EXPECT_NEAR(routeYaw(route, 0.0, route_length, route_length), left ? M_PI_2 : -M_PI_2, 0.1);
+    EXPECT_NEAR(smoothed_route.yaw(route_length), left ? M_PI_2 : -M_PI_2, 0.1);
   }
 }
 
@@ -140,15 +138,13 @@ TEST(RouteSampling, FollowsTurnForObjectAlreadyInIt) {
   const double start_arc_length = 0.25 * M_PI * radius;
   const double route_length = remainingRouteLength(route, start_arc_length);
 
-  EXPECT_NEAR(routeYaw(route, start_arc_length, route_length, 0.0), -M_PI_4, 0.05);
+  const SmoothedRoute smoothed(route, start_arc_length);
+  EXPECT_NEAR(smoothed.yaw(0.0), -M_PI_4, 0.05);
   for (double distance = 0.0; distance <= route_length; distance += 0.5) {
-    EXPECT_LT(
-        (smoothedPointOnRoute(route, start_arc_length, route_length, distance) - pointOnRoute(route, start_arc_length, distance))
-            .norm(),
-        0.2);
+    EXPECT_LT((smoothed.point(distance) - pointOnRoute(route, start_arc_length, distance)).norm(), 0.2);
   }
   const lanelet::BasicPoint2d position = pointOnRoute(route, start_arc_length, 0.0);
-  const lanelet::BasicPoint2d first_step = smoothedPointOnRoute(route, start_arc_length, route_length, 1.25);
+  const lanelet::BasicPoint2d first_step = smoothed.point(1.25);
   geometry_msgs::msg::Point observed;
   observed.x = position.x();
   observed.y = position.y();
@@ -159,6 +155,22 @@ TEST(RouteSampling, FollowsTurnForObjectAlreadyInIt) {
   velocity.x = 2.5 * std::cos(-M_PI_4);
   velocity.y = 2.5 * std::sin(-M_PI_4);
   EXPECT_TRUE(initialMotionFeasible(observed, velocity, predicted, 0.5, 2.5, 1.0, 2.0));
+}
+
+TEST(RouteSampling, SmoothedPointsDoNotDependOnQueryOrder) {
+  // The smoothed centerline is integrated once and extended as far as a query needs it.
+  const lanelet::routing::LaneletPath route = makeQuarterTurnRoute(true);
+  const double route_length = remainingRouteLength(route, 3.3);
+  const SmoothedRoute forward(route, 3.3);
+  const SmoothedRoute backward(route, 3.3);
+  std::vector<double> distances;
+  for (int step = 0; 0.37 * step <= route_length + 1.0; ++step) distances.push_back(0.37 * step);
+  std::vector<lanelet::BasicPoint2d> forward_points;
+  for (const double distance : distances) forward_points.push_back(forward.point(distance));
+  for (std::size_t index = distances.size(); index-- > 0;) {
+    EXPECT_LT((backward.point(distances[index]) - forward_points[index]).norm(), 1e-9);
+  }
+  EXPECT_LT((forward.point(route_length + 1.0) - forward.point(route_length)).norm(), 1e-9);
 }
 
 TEST(RouteSampling, UsesPrecedingLaneletAtTurnEntry) {
@@ -192,27 +204,26 @@ TEST(RouteSampling, UsesPrecedingLaneletAtTurnEntry) {
 
   // Looking only ahead, the heading at the car is taken from the turn.
   const double route_length = remainingRouteLength(route, start_arc_length);
-  EXPECT_LT(routeYaw(route, start_arc_length, route_length, 0.0), -0.4);
+  EXPECT_LT(SmoothedRoute(route, start_arc_length).yaw(0.0), -0.4);
   // With the approach, it matches the car's heading at the turn entry.
-  EXPECT_NEAR(routeYaw(geometry_route, geometry_start_arc_length, route_length, 0.0), 0.0, 0.15);
+  EXPECT_NEAR(SmoothedRoute(geometry_route, geometry_start_arc_length).yaw(0.0), 0.0, 0.15);
   EXPECT_NEAR(remainingRouteLength(geometry_route, geometry_start_arc_length), route_length, 1e-6);
 }
 
 TEST(RouteSampling, SmoothlyConvergesInitialLateralOffset) {
   lanelet::Lanelet straight = makeLaneletWithCenterline(4, {{0.0, 0.0}, {20.0, 0.0}});
-  const lanelet::routing::LaneletPath route({straight});
-  const double route_length = remainingRouteLength(route, 0.0);
+  const SmoothedRoute route(lanelet::routing::LaneletPath({straight}), 0.0);
 
   const double convergence_distance = lateralConvergenceDistance(1.5, 10.0, 9.0);
-  const lanelet::BasicPoint2d initial = pointOnConvergingRoute(route, 0.0, route_length, 0.0, 1.5, convergence_distance);
-  const lanelet::BasicPoint2d halfway = pointOnConvergingRoute(route, 0.0, route_length, 5.0, 1.5, convergence_distance);
-  const lanelet::BasicPoint2d converged = pointOnConvergingRoute(route, 0.0, route_length, 10.0, 1.5, convergence_distance);
+  const lanelet::BasicPoint2d initial = route.convergingPoint(0.0, 1.5, convergence_distance);
+  const lanelet::BasicPoint2d halfway = route.convergingPoint(5.0, 1.5, convergence_distance);
+  const lanelet::BasicPoint2d converged = route.convergingPoint(10.0, 1.5, convergence_distance);
   EXPECT_NEAR(convergence_distance, 10.0, 1e-6);
   EXPECT_NEAR(initial.y(), 1.5, 1e-6);
   EXPECT_NEAR(halfway.y(), 0.75, 1e-6);
   EXPECT_NEAR(converged.y(), 0.0, 1e-6);
-  const lanelet::BasicPoint2d before = pointOnConvergingRoute(route, 0.0, route_length, 4.99, 1.5, convergence_distance);
-  const lanelet::BasicPoint2d after = pointOnConvergingRoute(route, 0.0, route_length, 5.01, 1.5, convergence_distance);
+  const lanelet::BasicPoint2d before = route.convergingPoint(4.99, 1.5, convergence_distance);
+  const lanelet::BasicPoint2d after = route.convergingPoint(5.01, 1.5, convergence_distance);
   EXPECT_LT(after.y() - before.y(), 0.0);
 }
 
@@ -222,13 +233,12 @@ TEST(RouteSampling, MoreLateralAccelerationConvergesSooner) {
 
 TEST(RouteSampling, StartsAlongMeasuredLateralVelocity) {
   lanelet::Lanelet straight = makeLaneletWithCenterline(9, {{0.0, 0.0}, {100.0, 0.0}});
-  const lanelet::routing::LaneletPath route({straight});
-  const double route_length = remainingRouteLength(route, 0.0);
+  const SmoothedRoute route(lanelet::routing::LaneletPath({straight}), 0.0);
   const double distance = lateralConvergenceDistance(1.0, 10.0, 2.5, 2.0);
   const double slope = 2.0 / 10.0;
-  const lanelet::BasicPoint2d initial = pointOnConvergingRoute(route, 0.0, route_length, 0.0, 1.0, distance, slope);
-  const lanelet::BasicPoint2d next = pointOnConvergingRoute(route, 0.0, route_length, 0.001, 1.0, distance, slope);
-  const lanelet::BasicPoint2d end = pointOnConvergingRoute(route, 0.0, route_length, distance, 1.0, distance, slope);
+  const lanelet::BasicPoint2d initial = route.convergingPoint(0.0, 1.0, distance, slope);
+  const lanelet::BasicPoint2d next = route.convergingPoint(0.001, 1.0, distance, slope);
+  const lanelet::BasicPoint2d end = route.convergingPoint(distance, 1.0, distance, slope);
 
   EXPECT_NEAR((next.y() - initial.y()) / (next.x() - initial.x()), slope, 1e-3);
   EXPECT_NEAR(end.y(), 0.0, 1e-6);
@@ -252,7 +262,7 @@ TEST(RouteSampling, ReversingVelocityPointsAgainstBodyHeading) {
   const lanelet::routing::LaneletPath reverse_route({straight.invert()});
   const lanelet::BasicPoint2d next = pointOnRoute(reverse_route, 10.0, 1.0);
   EXPECT_NEAR(next.x(), 9.0, 1e-6);
-  EXPECT_NEAR(std::abs(routeYaw(reverse_route, 10.0, 10.0, 0.0)), M_PI, 1e-6);
+  EXPECT_NEAR(std::abs(SmoothedRoute(reverse_route, 10.0).yaw(0.0)), M_PI, 1e-6);
 }
 
 TEST(RouteSampling, RejectsObservedTransientSidewaysJump) {
@@ -310,11 +320,10 @@ TEST(RouteSampling, RoundaboutAllowanceAppliesOnlyNearTaggedLanelets) {
 
 TEST(RouteSampling, StationaryObjectRetainsItsLateralOffset) {
   lanelet::Lanelet straight = makeLaneletWithCenterline(8, {{0.0, 0.0}, {20.0, 0.0}});
-  const lanelet::routing::LaneletPath route({straight});
-  const double route_length = remainingRouteLength(route, 0.0);
+  const SmoothedRoute route(lanelet::routing::LaneletPath({straight}), 0.0);
   const double convergence_distance = lateralConvergenceDistance(1.5, 0.0, 2.5);
 
-  const lanelet::BasicPoint2d point = pointOnConvergingRoute(route, 0.0, route_length, 0.0, 1.5, convergence_distance);
+  const lanelet::BasicPoint2d point = route.convergingPoint(0.0, 1.5, convergence_distance);
   EXPECT_TRUE(std::isinf(convergence_distance));
   EXPECT_NEAR(point.y(), 1.5, 1e-6);
 }

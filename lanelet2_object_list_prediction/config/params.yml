@@ -13,7 +13,7 @@
         fallback_mode: kinematic                                # fallback mode for objects not matched to map [kinematic|static]
       kinematic_limitations:
         enable: true                                            # enable kinematic limitations
-        max_lateral_acceleration: 2.5                           # max lateral acceleration for predictions [m/s^2]
+        max_lateral_acceleration: 3.0                           # max lateral acceleration for predictions [m/s^2]
         max_longitudinal_deceleration: 2.0                      # max longitudinal deceleration for predictions [m/s^2]
         max_longitudinal_acceleration: 1.0                      # max longitudinal acceleration for predictions [m/s^2]
       yielding:
