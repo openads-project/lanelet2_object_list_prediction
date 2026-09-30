@@ -374,6 +374,7 @@ perception_msgs::msg::ObjectStatePrediction Lanelet2ObjectListPrediction::create
 
   for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
     perception_msgs::msg::ObjectState state = object.state;
+    state.continuous_state_covariance.clear();
     setPredictedStateKinematics(state, position.x, position.y, position.z, yaw, velocity, base_time, sample_index);
     prediction.states.push_back(state);
   }
@@ -401,6 +402,7 @@ perception_msgs::msg::ObjectStatePrediction Lanelet2ObjectListPrediction::create
   for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
     const double time_offset = prediction_sample_interval_s_ * static_cast<double>(sample_index + 1);
     perception_msgs::msg::ObjectState state = object.state;
+    state.continuous_state_covariance.clear();
     setPredictedStateKinematics(state, position.x + velocity.x * time_offset, position.y + velocity.y * time_offset,
                                 position.z + velocity.z * time_offset, yaw, velocity, base_time, sample_index);
     prediction.states.push_back(state);
@@ -416,6 +418,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
     const builtin_interfaces::msg::Time& base_time,
     std::size_t sample_index) const {
   perception_msgs::msg::ObjectState state = base_state;
+  state.continuous_state_covariance.clear();
   if (route.empty()) {
     RCLCPP_WARN(this->get_logger(), "Lanelet route is empty, cannot sample lanelet prediction");
     return state;
