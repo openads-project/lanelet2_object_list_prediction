@@ -85,6 +85,8 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
       PredictionParticipant participant{PredictionParticipant::Vehicle};
       double match_weight{1.0};
       double start_arc_length{0.0};
+      lanelet::routing::LaneletPath geometry_route;
+      double geometry_start_arc_length{0.0};
       double initial_speed{0.0};
       double initial_lateral_speed{0.0};
       bool reversing{false};

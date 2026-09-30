@@ -34,6 +34,7 @@ namespace {
 
 constexpr double kRouteProfileResolutionM = 0.25;
 constexpr double kCurvatureSampleDistanceM = 1.0;
+constexpr double kCurvatureHalfBaselineM = 4.0;
 constexpr int kHeadingMedianFilterHalfWidth = 6;
 constexpr double kHeadingMedianFilterSpacingM = 1.0;
 constexpr double kKinematicEpsilon = 1e-6;
@@ -119,13 +120,13 @@ struct TimeInterval {
   double exit{0.0};
 };
 
+// The start position can lie beyond the first lanelet, e.g. with a preceding lanelet added for its shape.
 double remainingRouteLength(const lanelet::routing::LaneletPath& route, double start_arc_length) {
-  double length = 0.0;
-  for (std::size_t route_index = 0; route_index < route.size(); ++route_index) {
-    const double lanelet_length = static_cast<double>(lanelet::geometry::length(route[route_index].centerline2d()));
-    length += route_index == 0 ? std::max(0.0, lanelet_length - start_arc_length) : lanelet_length;
+  double length = -start_arc_length;
+  for (const lanelet::ConstLanelet& lanelet : route) {
+    length += static_cast<double>(lanelet::geometry::length(lanelet.centerline2d()));
   }
-  return length;
+  return std::max(0.0, length);
 }
 
 /** Routes against the legal direction of one-way bicycle lanes, following their
@@ -156,6 +157,31 @@ lanelet::routing::LaneletPaths wrongWayBicyclePaths(const lanelet::ConstLanelet&
   return paths;
 }
 
+/** Route geometry including the lanelet preceding the route, for shape only.
+ * Heading filtering and curvature also sample behind the object; without the
+ * preceding lanelet, an object entering a turning lanelet gets the heading of
+ * the turn ahead instead of its approach. Distances along the route stay
+ * relative to the object. */
+std::pair<lanelet::routing::LaneletPath, double> routeGeometryWithPredecessor(
+    const lanelet::routing::LaneletPath& route, double start_arc_length, const lanelet::routing::RoutingGraph& routing_graph) {
+  const double lookbehind = kHeadingMedianFilterHalfWidth * kHeadingMedianFilterSpacingM + kCurvatureHalfBaselineM;
+  if (route.empty() || start_arc_length >= lookbehind) return {route, start_arc_length};
+  const lanelet::ConstLanelets predecessors = routing_graph.previous(route.front(), false);
+  if (predecessors.empty()) return {route, start_arc_length};
+  const double start_yaw = computeLaneletYawAtArcLength(route.front(), 0.0);
+  const auto yaw_difference = [&](const lanelet::ConstLanelet& predecessor) {
+    const double length = static_cast<double>(lanelet::geometry::length(predecessor.centerline2d()));
+    return std::abs(wrap_angle_rad(computeLaneletYawAtArcLength(predecessor, length) - start_yaw));
+  };
+  const lanelet::ConstLanelet& predecessor =
+      *std::min_element(predecessors.begin(), predecessors.end(),
+                        [&](const auto& lhs, const auto& rhs) { return yaw_difference(lhs) < yaw_difference(rhs); });
+  lanelet::ConstLanelets lanelets{predecessor};
+  lanelets.insert(lanelets.end(), route.begin(), route.end());
+  return {lanelet::routing::LaneletPath(lanelets),
+          start_arc_length + static_cast<double>(lanelet::geometry::length(predecessor.centerline2d()))};
+}
+
 bool startsNearRoundabout(const lanelet::routing::LaneletPath& route, double start_arc_length) {
   double distance_to_lanelet = 0.0;
   for (std::size_t index = 0; index < route.size() && distance_to_lanelet <= kRoundaboutLookaheadM; ++index) {
@@ -166,8 +192,9 @@ bool startsNearRoundabout(const lanelet::routing::LaneletPath& route, double sta
   return false;
 }
 
+// Negative travel distances reach back on the first lanelet, behind the object.
 lanelet::BasicPoint2d pointOnRoute(const lanelet::routing::LaneletPath& route, double start_arc_length, double travel_distance) {
-  double distance_on_route = start_arc_length + std::max(0.0, travel_distance);
+  double distance_on_route = start_arc_length + std::max(-start_arc_length, travel_distance);
   for (std::size_t route_index = 0; route_index < route.size(); ++route_index) {
     const lanelet::ConstLineString2d centerline = route[route_index].centerline2d();
     const double lanelet_length = static_cast<double>(lanelet::geometry::length(centerline));
@@ -187,7 +214,7 @@ double rawRouteYaw(const lanelet::routing::LaneletPath& route,
                    double start_arc_length,
                    double route_length,
                    double travel_distance) {
-  const double before_distance = std::max(0.0, travel_distance - kCurvatureSampleDistanceM);
+  const double before_distance = std::max(-start_arc_length, travel_distance - kCurvatureSampleDistanceM);
   const double after_distance = std::min(route_length, travel_distance + kCurvatureSampleDistanceM);
   const lanelet::BasicPoint2d before = pointOnRoute(route, start_arc_length, before_distance);
   const lanelet::BasicPoint2d after = pointOnRoute(route, start_arc_length, after_distance);
@@ -201,9 +228,11 @@ double routeYaw(const lanelet::routing::LaneletPath& route,
   const double reference_yaw = rawRouteYaw(route, start_arc_length, route_length, travel_distance);
   std::vector<double> yaw_samples;
   yaw_samples.reserve(2 * kHeadingMedianFilterHalfWidth + 1);
+  // The window also covers the first lanelet behind the object. Looking only
+  // ahead, an object already in a turn gets the heading of the turn's rest.
   for (int offset_index = -kHeadingMedianFilterHalfWidth; offset_index <= kHeadingMedianFilterHalfWidth; ++offset_index) {
     const double sample_distance = travel_distance + static_cast<double>(offset_index) * kHeadingMedianFilterSpacingM;
-    if (sample_distance < 0.0 || sample_distance > route_length) continue;
+    if (sample_distance < -start_arc_length || sample_distance > route_length) continue;
     const double sample_yaw = rawRouteYaw(route, start_arc_length, route_length, sample_distance);
     yaw_samples.push_back(reference_yaw + std::remainder(sample_yaw - reference_yaw, 2.0 * M_PI));
   }
@@ -292,8 +321,8 @@ double routeCurvature(const lanelet::routing::LaneletPath& route,
                       double start_arc_length,
                       double route_length,
                       double travel_distance) {
-  const double before_distance = std::max(0.0, travel_distance - kCurvatureSampleDistanceM);
-  const double after_distance = std::min(route_length, travel_distance + kCurvatureSampleDistanceM);
+  const double before_distance = std::max(-start_arc_length, travel_distance - kCurvatureHalfBaselineM);
+  const double after_distance = std::min(route_length, travel_distance + kCurvatureHalfBaselineM);
   if (after_distance - before_distance < kKinematicEpsilon) return 0.0;
   const double before_yaw = routeYaw(route, start_arc_length, route_length, before_distance);
   const double after_yaw = routeYaw(route, start_arc_length, route_length, after_distance);
@@ -398,6 +427,31 @@ RouteMotionProfile buildRouteMotionProfile(const lanelet::routing::LaneletPath& 
     }
   }
   return profile;
+}
+
+/** Describes the curve that requires the hardest braking from the initial speed, for debugging infeasible profiles. */
+std::string criticalCurveDescription(const lanelet::routing::LaneletPath& route,
+                                     double start_arc_length,
+                                     double initial_speed,
+                                     double max_lateral_acceleration) {
+  const double route_length = remainingRouteLength(route, start_arc_length);
+  double worst_deceleration = 0.0;
+  std::ostringstream description;
+  const auto sample_count = static_cast<std::size_t>(route_length / kRouteProfileResolutionM);
+  for (std::size_t index = 0; index <= sample_count; ++index) {
+    const double distance = static_cast<double>(index) * kRouteProfileResolutionM;
+    const double curvature = routeCurvature(route, start_arc_length, route_length, distance);
+    if (curvature <= kKinematicEpsilon) continue;
+    const double speed_limit = std::sqrt(max_lateral_acceleration / curvature);
+    const double deceleration =
+        (initial_speed * initial_speed - speed_limit * speed_limit) / (2.0 * std::max(distance, kRouteProfileResolutionM));
+    if (deceleration <= worst_deceleration) continue;
+    worst_deceleration = deceleration;
+    description.str("");
+    description << "radius " << 1.0 / curvature << " m at " << distance << " m allows " << speed_limit << " m/s, needs "
+                << deceleration << " m/s^2 braking";
+  }
+  return description.str();
 }
 
 double timeAtRouteDistance(const std::vector<RouteMotionSample>& profile, double target_distance) {
@@ -1193,17 +1247,25 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
     for (const lanelet::routing::LaneletPath& lanelet_route : routes) {
       const double route_length = remainingRouteLength(lanelet_route, match.start_arc_length);
       const bool stop_at_route_end = route_length + kKinematicEpsilon < max_travel_distance;
+      const auto [geometry_route, geometry_start_arc_length] =
+          routeGeometryWithPredecessor(lanelet_route, match.start_arc_length, *routing_graph);
       const RouteMotionProfile motion_profile = buildRouteMotionProfile(
-          lanelet_route, match.start_arc_length, speed, processing_kinematic_limitations_max_lateral_acceleration_,
+          geometry_route, geometry_start_arc_length, speed, processing_kinematic_limitations_max_lateral_acceleration_,
           processing_kinematic_limitations_max_longitudinal_acceleration_,
           processing_kinematic_limitations_max_longitudinal_deceleration_, stop_at_route_end, std::nullopt,
           processing_kinematic_limitations_enable_);
       bool feasible = motion_profile.feasible;
       const char* infeasibility = feasible ? "" : "curve speed not reachable";
+      if (!feasible) {
+        RCLCPP_DEBUG_STREAM(this->get_logger().get_child("hypotheses"),
+                            "object " << prediction_object.object.id << " critical curve: "
+                                      << criticalCurveDescription(geometry_route, geometry_start_arc_length, speed,
+                                                                  processing_kinematic_limitations_max_lateral_acceleration_));
+      }
       if (processing_kinematic_limitations_enable_ && feasible) {
         const RouteMotionSample first_motion = sampleRouteMotionAtTime(motion_profile.samples, output_sample_interval_);
         const perception_msgs::msg::ObjectState first_state = sampleStateOnLaneletRoute(
-            prediction_object.object.state, lanelet_route, match.start_arc_length, first_motion.distance, first_motion.speed,
+            prediction_object.object.state, geometry_route, geometry_start_arc_length, first_motion.distance, first_motion.speed,
             speed, match.lateral_speed, match.reversing, base_time, 0);
         feasible =
             initialMotionFeasible(perception_msgs::object_access::getPosition(prediction_object.object),
@@ -1230,6 +1292,8 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
         hypothesis.match_weight = 1.0 / ((1.0 + match.centerline_distance) * static_cast<double>(routes.size()));
       }
       hypothesis.start_arc_length = match.start_arc_length;
+      hypothesis.geometry_route = geometry_route;
+      hypothesis.geometry_start_arc_length = geometry_start_arc_length;
       hypothesis.initial_speed = speed;
       hypothesis.initial_lateral_speed = match.lateral_speed;
       hypothesis.reversing = match.reversing;
@@ -1267,9 +1331,10 @@ void Lanelet2ObjectListPrediction::finalizeMapBasedPredictions(PredictionObject&
     for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
       const double sample_time = output_sample_interval_ * static_cast<double>(sample_index + 1);
       const RouteMotionSample motion = sampleRouteMotionAtTime(hypothesis.motion_profile, sample_time);
-      hypothesis.prediction.states.push_back(sampleStateOnLaneletRoute(
-          prediction_object.object.state, hypothesis.route, hypothesis.start_arc_length, motion.distance, motion.speed,
-          hypothesis.initial_speed, hypothesis.initial_lateral_speed, hypothesis.reversing, base_time, sample_index));
+      hypothesis.prediction.states.push_back(
+          sampleStateOnLaneletRoute(prediction_object.object.state, hypothesis.geometry_route,
+                                    hypothesis.geometry_start_arc_length, motion.distance, motion.speed, hypothesis.initial_speed,
+                                    hypothesis.initial_lateral_speed, hypothesis.reversing, base_time, sample_index));
     }
   }
 
@@ -1530,7 +1595,7 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
       if (selected_constraint.has_value()) {
         PredictionObject::Hypothesis& hypothesis = prediction_object.hypotheses[hypothesis_index];
         const RouteMotionProfile yielded_profile =
-            buildRouteMotionProfile(hypothesis.route, hypothesis.start_arc_length, hypothesis.initial_speed,
+            buildRouteMotionProfile(hypothesis.geometry_route, hypothesis.geometry_start_arc_length, hypothesis.initial_speed,
                                     processing_kinematic_limitations_max_lateral_acceleration_,
                                     processing_kinematic_limitations_max_longitudinal_acceleration_,
                                     processing_kinematic_limitations_max_longitudinal_deceleration_, hypothesis.stop_at_route_end,
@@ -1694,7 +1759,7 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
         following_active = true;
         if (!unconstrained_profile) {
           unconstrained_profile =
-              buildRouteMotionProfile(follower.route, follower.start_arc_length, follower.initial_speed,
+              buildRouteMotionProfile(follower.geometry_route, follower.geometry_start_arc_length, follower.initial_speed,
                                       processing_kinematic_limitations_max_lateral_acceleration_,
                                       processing_kinematic_limitations_max_longitudinal_acceleration_,
                                       processing_kinematic_limitations_max_longitudinal_deceleration_, follower.stop_at_route_end,

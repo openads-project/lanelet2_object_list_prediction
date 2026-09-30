@@ -71,6 +71,18 @@ TEST(RouteCurvature, SuppressesIsolatedLaneletBoundaryKink) {
   EXPECT_TRUE(buildRouteMotionProfile(route, 0.0, 13.0, 2.5, 1.0, 2.0, false).feasible);
 }
 
+TEST(RouteCurvature, SuppressesLaneletBoundaryKinkAtUrbanSpeed) {
+  // Bag 06: a car at 15 m/s on a nearly straight road with a 3.6 deg heading step between lanelets.
+  constexpr double kink_angle = 3.6 * M_PI / 180.0;
+  lanelet::Lanelet first = makeLaneletWithCenterline(8, {{0.0, 0.0}, {20.0, 0.0}});
+  lanelet::Lanelet second = makeLaneletWithCenterline(9, {{20.0, 0.0}, {40.0, 20.0 * std::tan(kink_angle)}});
+  const lanelet::routing::LaneletPath route({first, second});
+  const double route_length = remainingRouteLength(route, 0.0);
+
+  EXPECT_LT(routeCurvature(route, 0.0, route_length, 20.0), 3.0 / (15.0 * 15.0));
+  EXPECT_TRUE(buildRouteMotionProfile(route, 0.0, 15.0, 3.0, 1.0, 2.0, false).feasible);
+}
+
 TEST(RouteCurvature, SuppressesShortLateralCenterlineStep) {
   lanelet::Lanelet first = makeLaneletWithCenterline(5, {{0.0, 0.0}, {10.0, 0.0}});
   lanelet::Lanelet step = makeLaneletWithCenterline(6, {{10.0, 0.0}, {10.2, 1.0}, {12.5, 1.2}});
@@ -90,10 +102,14 @@ TEST(RouteCurvature, PreservesSustainedCurve) {
     center_points.emplace_back(radius * std::cos(angle), radius * std::sin(angle));
   }
   lanelet::Lanelet curve = makeLaneletWithCenterline(3, center_points);
-  const lanelet::routing::LaneletPath route({curve});
+  // Curvature is measured across several metres, so the curve is embedded in its approach and exit as in a map.
+  lanelet::Lanelet approach = makeLaneletWithCenterline(lanelet::utils::getId(), {{-20.0, -radius}, {0.0, -radius}});
+  lanelet::Lanelet exit = makeLaneletWithCenterline(lanelet::utils::getId(), {{radius, 0.0}, {radius, 20.0}});
+  const lanelet::routing::LaneletPath route({approach, curve, exit});
   const double route_length = remainingRouteLength(route, 0.0);
+  const double curve_middle = 20.0 + 0.25 * M_PI * radius;
 
-  EXPECT_NEAR(routeCurvature(route, 0.0, route_length, route_length / 2.0), 1.0 / radius, 0.005);
+  EXPECT_NEAR(routeCurvature(route, 0.0, route_length, curve_middle), 1.0 / radius, 0.005);
 }
 
 TEST(RouteCurvature, PreservesShortLeftAndRightTurns) {
@@ -108,6 +124,78 @@ TEST(RouteCurvature, PreservesShortLeftAndRightTurns) {
     EXPECT_LT((smoothed_end - raw_end).norm(), 2.0);
     EXPECT_NEAR(routeYaw(route, 0.0, route_length, route_length), left ? M_PI_2 : -M_PI_2, 0.1);
   }
+}
+
+TEST(RouteSampling, FollowsTurnForObjectAlreadyInIt) {
+  // A car halfway through a right turn, moving exactly along the lane.
+  constexpr double radius = 8.0;
+  std::vector<lanelet::BasicPoint2d> curve_points;
+  for (int degrees = 90; degrees >= 0; degrees -= 5) {
+    const double angle = static_cast<double>(degrees) * M_PI / 180.0;
+    curve_points.emplace_back(radius * std::cos(angle), -radius + radius * std::sin(angle));
+  }
+  lanelet::Lanelet curve = makeLaneletWithCenterline(lanelet::utils::getId(), curve_points);
+  lanelet::Lanelet last = makeLaneletWithCenterline(lanelet::utils::getId(), {{radius, -radius}, {radius, -radius - 25.0}});
+  const lanelet::routing::LaneletPath route({curve, last});
+  const double start_arc_length = 0.25 * M_PI * radius;
+  const double route_length = remainingRouteLength(route, start_arc_length);
+
+  EXPECT_NEAR(routeYaw(route, start_arc_length, route_length, 0.0), -M_PI_4, 0.05);
+  for (double distance = 0.0; distance <= route_length; distance += 0.5) {
+    EXPECT_LT(
+        (smoothedPointOnRoute(route, start_arc_length, route_length, distance) - pointOnRoute(route, start_arc_length, distance))
+            .norm(),
+        0.2);
+  }
+  const lanelet::BasicPoint2d position = pointOnRoute(route, start_arc_length, 0.0);
+  const lanelet::BasicPoint2d first_step = smoothedPointOnRoute(route, start_arc_length, route_length, 1.25);
+  geometry_msgs::msg::Point observed;
+  observed.x = position.x();
+  observed.y = position.y();
+  geometry_msgs::msg::Point predicted;
+  predicted.x = first_step.x();
+  predicted.y = first_step.y();
+  geometry_msgs::msg::Vector3 velocity;
+  velocity.x = 2.5 * std::cos(-M_PI_4);
+  velocity.y = 2.5 * std::sin(-M_PI_4);
+  EXPECT_TRUE(initialMotionFeasible(observed, velocity, predicted, 0.5, 2.5, 1.0, 2.0));
+}
+
+TEST(RouteSampling, UsesPrecedingLaneletAtTurnEntry) {
+  // A car has just entered a right-turn lanelet from a straight approach.
+  constexpr double radius = 8.0;
+  auto point = [](double x, double y) { return lanelet::Point3d(lanelet::utils::getId(), x, y, 0.0); };
+  const lanelet::Point3d left_join = point(20.0, 1.5);
+  const lanelet::Point3d right_join = point(20.0, -1.5);
+  lanelet::Lanelet approach(lanelet::utils::getId(), lanelet::LineString3d(lanelet::utils::getId(), {point(0.0, 1.5), left_join}),
+                            lanelet::LineString3d(lanelet::utils::getId(), {point(0.0, -1.5), right_join}));
+  lanelet::Points3d left_points{left_join};
+  lanelet::Points3d right_points{right_join};
+  for (int degrees = 85; degrees >= 0; degrees -= 5) {
+    const double angle = static_cast<double>(degrees) * M_PI / 180.0;
+    left_points.push_back(point(20.0 + (radius + 1.5) * std::cos(angle), -radius + (radius + 1.5) * std::sin(angle)));
+    right_points.push_back(point(20.0 + (radius - 1.5) * std::cos(angle), -radius + (radius - 1.5) * std::sin(angle)));
+  }
+  lanelet::Lanelet turn(lanelet::utils::getId(), lanelet::LineString3d(lanelet::utils::getId(), left_points),
+                        lanelet::LineString3d(lanelet::utils::getId(), right_points));
+  const auto map = lanelet::utils::createMap({approach, turn});
+  const auto vehicle_rules = lanelet::traffic_rules::TrafficRulesFactory::create(
+      static_cast<const char*>(lanelet::Locations::Germany), static_cast<const char*>(lanelet::Participants::Vehicle));
+  const auto routing_graph = lanelet::routing::RoutingGraph::build(*map, *vehicle_rules);
+
+  const lanelet::routing::LaneletPath route({turn});
+  constexpr double start_arc_length = 0.5;
+  const auto [geometry_route, geometry_start_arc_length] = routeGeometryWithPredecessor(route, start_arc_length, *routing_graph);
+  ASSERT_EQ(geometry_route.size(), 2U);
+  EXPECT_EQ(geometry_route.front().id(), approach.id());
+  EXPECT_NEAR(geometry_start_arc_length, 20.0 + start_arc_length, 1e-6);
+
+  // Looking only ahead, the heading at the car is taken from the turn.
+  const double route_length = remainingRouteLength(route, start_arc_length);
+  EXPECT_LT(routeYaw(route, start_arc_length, route_length, 0.0), -0.4);
+  // With the approach, it matches the car's heading at the turn entry.
+  EXPECT_NEAR(routeYaw(geometry_route, geometry_start_arc_length, route_length, 0.0), 0.0, 0.15);
+  EXPECT_NEAR(remainingRouteLength(geometry_route, geometry_start_arc_length), route_length, 1e-6);
 }
 
 TEST(RouteSampling, SmoothlyConvergesInitialLateralOffset) {
