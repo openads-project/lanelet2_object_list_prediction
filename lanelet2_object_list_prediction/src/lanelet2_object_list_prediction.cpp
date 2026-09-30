@@ -1123,7 +1123,9 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
         reject("moving sideways");
         continue;  // Nearly sideways motion is better represented by the Cartesian fallback.
       }
-      const bool reversing = lane_velocity.longitudinal < -kKinematicEpsilon;
+      // Below this speed the tracked velocity is noise: the object stands, keeping its position and heading
+      const bool standing = planar_speed < kMotionDirectionMinSpeedMps;
+      const bool reversing = !standing && lane_velocity.longitudinal < -kKinematicEpsilon;
       if (reversing && wrong_way) {
         reject("wrong-way heading but moving along the legal direction");
         continue;
@@ -1136,8 +1138,8 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
           std::abs(lanelet::geometry::toArcCoordinates(matched_lanelet.centerline2d(), position_2d).distance);
       prediction_object.lanelet_matches.push_back(
           LaneletMatch{matched_lanelet, participant, candidate_lanelet.first, centerline_distance, start_arc_length,
-                       orientation_difference, reversing, std::abs(lane_velocity.longitudinal),
-                       reversing ? -lane_velocity.lateral : lane_velocity.lateral, wrong_way});
+                       orientation_difference, reversing, standing ? 0.0 : std::abs(lane_velocity.longitudinal),
+                       standing ? 0.0 : (reversing ? -lane_velocity.lateral : lane_velocity.lateral), wrong_way});
     }
 
     // Wrong-way riding is only assumed when no lanelet is ridden legally.
@@ -1263,6 +1265,8 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
                                                                   processing_kinematic_limitations_max_lateral_acceleration_));
       }
       if (processing_kinematic_limitations_enable_ && feasible) {
+        const double route_lateral_acceleration =
+            speed * speed * routeCurvature(geometry_route, geometry_start_arc_length, route_length, 0.0);
         const RouteMotionSample first_motion = sampleRouteMotionAtTime(motion_profile.samples, output_sample_interval_);
         const perception_msgs::msg::ObjectState first_state = sampleStateOnLaneletRoute(
             prediction_object.object.state, geometry_route, geometry_start_arc_length, first_motion.distance, first_motion.speed,
@@ -1271,13 +1275,30 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
             initialMotionFeasible(perception_msgs::object_access::getPosition(prediction_object.object),
                                   perception_msgs::object_access::getVelocityXYZ(prediction_object.object),
                                   perception_msgs::object_access::getPosition(first_state), output_sample_interval_,
-                                  processing_kinematic_limitations_max_lateral_acceleration_,
+                                  processing_kinematic_limitations_max_lateral_acceleration_ + route_lateral_acceleration,
                                   processing_kinematic_limitations_max_longitudinal_acceleration_,
                                   processing_kinematic_limitations_max_longitudinal_deceleration_,
                                   processing_roundabout_enable_ && startsNearRoundabout(lanelet_route, match.start_arc_length)
                                       ? processing_roundabout_initial_alignment_tolerance_
                                       : 0.0);
-        if (!feasible) infeasibility = "initial motion not reachable";
+        if (!feasible) {
+          infeasibility = "initial motion not reachable";
+          RCLCPP_DEBUG_STREAM(this->get_logger().get_child("hypotheses"), [&] {
+            // Acceleration needed to reach the first predicted position, split along and across the motion.
+            const auto observed = perception_msgs::object_access::getPosition(prediction_object.object);
+            const auto velocity = perception_msgs::object_access::getVelocityXYZ(prediction_object.object);
+            const auto predicted = perception_msgs::object_access::getPosition(first_state);
+            const double scale = 2.0 / (output_sample_interval_ * output_sample_interval_);
+            const double ax = (predicted.x - observed.x - velocity.x * output_sample_interval_) * scale;
+            const double ay = (predicted.y - observed.y - velocity.y * output_sample_interval_) * scale;
+            const double v = std::max(std::hypot(velocity.x, velocity.y), kKinematicEpsilon);
+            std::ostringstream detail;
+            detail << "object " << prediction_object.object.id << " first step needs " << (ax * velocity.x + ay * velocity.y) / v
+                   << " m/s^2 along, " << (ay * velocity.x - ax * velocity.y) / v << " m/s^2 across (route curve allows "
+                   << route_lateral_acceleration << " m/s^2 extra)";
+            return detail.str();
+          }());
+        }
       }
       std::ostringstream route_ids;
       for (const lanelet::ConstLanelet& route_lanelet : lanelet_route) route_ids << " " << route_lanelet.id();
@@ -1650,6 +1671,28 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
     for (std::size_t hypothesis_index = 0; hypothesis_index < object.hypotheses.size(); ++hypothesis_index) {
       const PredictionObject::Hypothesis& follower = object.hypotheses[hypothesis_index];
       if (follower.reversing || follower.motion_profile.empty() || follower.route.empty()) continue;
+      // Traffic behind the follower cannot lead it
+      std::optional<lanelet::BasicPoint2d> follower_position;
+      lanelet::BasicPoint2d follower_direction(0.0, 0.0);
+      try {
+        const auto position = perception_msgs::object_access::getPosition(object.object);
+        const double yaw = perception_msgs::object_access::getYaw(object.object);
+        follower_position = lanelet::BasicPoint2d(position.x, position.y);
+        follower_direction = lanelet::BasicPoint2d(std::cos(yaw), std::sin(yaw));
+      } catch (const std::exception&) {
+      }
+      const auto behind_follower = [&](const lanelet::BasicPoint2d& position) {
+        return follower_position.has_value() && (position - *follower_position).dot(follower_direction) < 0.0;
+      };
+      const bool ego_behind = !ego_poses.empty() && behind_follower(ego_poses.front().position);
+      std::vector<bool> leader_behind(prediction_objects.size(), false);
+      for (std::size_t leader_index = 0; leader_index < prediction_objects.size(); ++leader_index) {
+        try {
+          const auto position = perception_msgs::object_access::getPosition(prediction_objects[leader_index].object);
+          leader_behind[leader_index] = behind_follower(lanelet::BasicPoint2d(position.x, position.y));
+        } catch (const std::exception&) {
+        }
+      }
       RouteMotionProfile profile;
       profile.feasible = follower.feasible;
       profile.samples.push_back(follower.motion_profile.front());
@@ -1666,10 +1709,11 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
         double speed_limit = nominal.speed;
         double distance_limit = std::numeric_limits<double>::infinity();
         double braking_speed_limit = std::numeric_limits<double>::infinity();
+        std::string limiting_leader;
 
         auto consider = [&](const lanelet::BasicPoint2d& position_now, const lanelet::BasicPoint2d& position_next,
                             double yaw_next, double leader_speed, double leader_rear,
-                            const std::optional<lanelet::Id>& lanelet_id) {
+                            const std::optional<lanelet::Id>& lanelet_id, const std::string& leader_label) {
           const auto projected_next =
               projectLeaderOnRoute(follower.route, follower.start_arc_length, position_next, yaw_next, lanelet_id);
           if (!projected_next || *projected_next <= previous.distance + kKinematicEpsilon) return;
@@ -1678,6 +1722,7 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
           const double gap =
               (projected_now ? *projected_now : *projected_next) + leader_rear - previous.distance - follower_front;
           const double clearance = *projected_next + leader_rear - follower_front - processing_following_headway_distance_;
+          if (clearance < distance_limit) limiting_leader = leader_label;
           distance_limit = std::min(distance_limit, clearance);
           const double available_braking_distance =
               std::max(0.0, gap - processing_following_headway_distance_ - processing_following_headway_time_ * previous.speed);
@@ -1687,18 +1732,18 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
                         2.0 * processing_kinematic_limitations_max_longitudinal_deceleration_ * available_braking_distance));
         };
 
-        if (!ego_poses.empty()) {
+        if (!ego_poses.empty() && !ego_behind) {
           const auto now = interpolatePose(ego_poses, time);
           const auto next = interpolatePose(ego_poses, next_time);
           if (now && next) {
             const lanelet::BasicPoint2d motion = next->position - now->position;
             const double speed = motion.norm() / dt;
             const double yaw = speed > kMotionDirectionMinSpeedMps ? std::atan2(motion.y(), motion.x()) : next->yaw;
-            consider(now->position, next->position, yaw, speed, ego_rear, std::nullopt);
+            consider(now->position, next->position, yaw, speed, ego_rear, std::nullopt, "ego");
           }
         }
         for (std::size_t leader_index = 0; leader_index < prediction_objects.size(); ++leader_index) {
-          if (leader_index == object_index) continue;
+          if (leader_index == object_index || leader_behind[leader_index]) continue;
           const PredictionObject& leader_object = prediction_objects[leader_index];
           const double leader_rear = object_offsets[leader_index].second;
           if (leader_object.hypotheses.empty()) {
@@ -1712,7 +1757,8 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
               const lanelet::BasicPoint2d start(position.x, position.y);
               const lanelet::BasicPoint2d step =
                   speed > 0.0 ? lanelet::BasicPoint2d(velocity.x, velocity.y) : lanelet::BasicPoint2d(0.0, 0.0);
-              consider(start + time * step, start + next_time * step, yaw, speed, leader_rear, std::nullopt);
+              consider(start + time * step, start + next_time * step, yaw, speed, leader_rear, std::nullopt,
+                       "object " + std::to_string(leader_object.object.id) + " (fallback)");
             } catch (const std::exception&) {
             }
             continue;
@@ -1726,7 +1772,7 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
             const double yaw = computeLaneletYawAtArcLength(lanelet, arc_length);
             consider(pointOnRoute(leader.route, leader.start_arc_length, now.distance),
                      lanelet::geometry::interpolatedPointAtDistance(lanelet.centerline2d(), arc_length), yaw, next.speed,
-                     leader_rear, lanelet.id());
+                     leader_rear, lanelet.id(), "object " + std::to_string(leader_object.object.id));
           }
         }
 
@@ -1755,6 +1801,13 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
             previous, next_time, nominal.distance, speed_limit, distance_limit, processing_following_headway_time_,
             follower.initial_speed, processing_kinematic_limitations_max_longitudinal_acceleration_,
             processing_kinematic_limitations_max_longitudinal_deceleration_, route_length);
+        if (profile.feasible && !step.feasible) {
+          RCLCPP_DEBUG_STREAM(this->get_logger().get_child("following"),
+                              "object " << object.object.id << " hypothesis " << hypothesis_index << ": infeasible at "
+                                        << next_time << " s, cannot keep the headway to " << limiting_leader << " (at "
+                                        << previous.distance << " m, " << previous.speed << " m/s, allowed up to "
+                                        << distance_limit << " m)");
+        }
         profile.feasible = profile.feasible && step.feasible;
         profile.samples.push_back(step.sample);
         time = next_time;
@@ -1856,13 +1909,27 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
   const double initial_yaw = routeYaw(route, start_arc_length, route_length, 0.0);
   const double lateral_offset = -std::sin(initial_yaw) * (fallback_position.x - initial_centerline_point.x()) +
                                 std::cos(initial_yaw) * (fallback_position.y - initial_centerline_point.y());
+  // Split the observed velocity along the smoothed route direction the path starts in, not along the lanelet's local direction
+  double longitudinal_speed = initial_speed;
+  double lateral_speed = initial_lateral_speed;
+  if (!reversing && initial_speed > kKinematicEpsilon) {
+    try {
+      const LaneletVelocity route_velocity =
+          velocityAlongLanelet(perception_msgs::object_access::getVelocityXYZ(base_state), initial_yaw);
+      if (route_velocity.longitudinal > kKinematicEpsilon) {
+        longitudinal_speed = route_velocity.longitudinal;
+        lateral_speed = route_velocity.lateral;
+      }
+    } catch (const std::exception&) {
+    }
+  }
   const double clamped_travel_distance = std::clamp(travel_distance, 0.0, route_length);
   const double convergence_distance =
       processing_kinematic_limitations_enable_
-          ? lateralConvergenceDistance(lateral_offset, initial_speed, processing_kinematic_limitations_max_lateral_acceleration_,
-                                       initial_lateral_speed)
+          ? lateralConvergenceDistance(lateral_offset, longitudinal_speed,
+                                       processing_kinematic_limitations_max_lateral_acceleration_, lateral_speed)
           : kRouteProfileResolutionM;
-  const double initial_slope = initial_speed > kKinematicEpsilon ? initial_lateral_speed / initial_speed : 0.0;
+  const double initial_slope = longitudinal_speed > kKinematicEpsilon ? lateral_speed / longitudinal_speed : 0.0;
   const lanelet::BasicPoint2d point = pointOnConvergingRoute(route, start_arc_length, route_length, clamped_travel_distance,
                                                              lateral_offset, convergence_distance, initial_slope);
   const double before_distance = std::max(0.0, clamped_travel_distance - kMotionTangentSampleDistanceM);
