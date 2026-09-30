@@ -75,10 +75,10 @@ flowchart LR
 | `processing.map_matching.max_distance` | `float` | `0.5` | max distance from a lanelet to consider it a match [m] |
 | `processing.map_matching.bicycle_max_distance` | `float` | `1.0` | max distance from a lanelet to consider it a match for bicycles, riding at lane edges [m] |
 | `processing.map_matching.max_delta_yaw_deg` | `float` | `90.0` | max yaw difference from a lanelet direction to consider it a match [deg] |
-| `processing.map_matching.prefer_bicycle_lanes_for_motorcycles` | `bool` | `true` | discard motorcycle vehicle lane matches when a valid bicycle lane match exists |
-| `processing.map_following.enforce_centerline` | `bool` | `true` | place matched prediction samples on the lane centerline |
-| `processing.map_following.reset_detection_to_centerline` | `bool` | `false` | also snap matched detections to the lane centerline |
+| `processing.map_matching.prefer_bicycle_lanes_for_motorcycles` | `bool` | `true` | prefer valid bicycle lane matches over vehicle lanes for motorcycles |
 | `processing.map_matching.fallback_mode` | `string` | `"kinematic"` | fallback mode for objects not matched to map [kinematic|static] |
+| `processing.map_following.enforce_centerline` | `bool` | `true` | place matched predictions on the lane centerline |
+| `processing.map_following.reset_detection_to_centerline` | `bool` | `false` | also place matched detections on the lane centerline |
 | `processing.kinematic_limitations.enable` | `bool` | `true` | enable kinematic limitations |
 | `processing.kinematic_limitations.max_lateral_acceleration` | `float` | `2.5` | max lateral acceleration for predictions [m/s^2] |
 | `processing.kinematic_limitations.max_longitudinal_deceleration` | `float` | `2.0` | max longitudinal deceleration for predictions [m/s^2] |
