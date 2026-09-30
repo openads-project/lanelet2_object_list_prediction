@@ -180,6 +180,66 @@ TEST(RightOfWay, SharedApproachOnlyAppliesToConflictingBranch) {
   EXPECT_EQ(conflictLaneletAtYieldLine(turning_route, 0, 1, *rule, *graph), 1U);
 }
 
+TEST(RightOfWay, PriorityPathCoversTheWholeJunction) {
+  auto point = [](double x, double y) { return lanelet::Point3d(lanelet::utils::getId(), x, y, 0.0); };
+  auto lanelet_between = [](lanelet::Id id, const lanelet::Point3d& left_start, const lanelet::Point3d& left_end,
+                            const lanelet::Point3d& right_start, const lanelet::Point3d& right_end) {
+    lanelet::Lanelet lanelet(id, lanelet::LineString3d(lanelet::utils::getId(), {left_start, left_end}),
+                             lanelet::LineString3d(lanelet::utils::getId(), {right_start, right_end}));
+    lanelet.setAttribute(lanelet::AttributeName::Subtype, lanelet::AttributeValueString::Road);
+    return lanelet;
+  };
+  const auto left_0 = point(0.0, 1.0), right_0 = point(0.0, -1.0);
+  const auto left_2 = point(2.0, 1.0), right_2 = point(2.0, -1.0);
+  const auto left_12 = point(12.0, 1.0), right_12 = point(12.0, -1.0);
+  const auto left_24 = point(24.0, 1.0), right_24 = point(24.0, -1.0);
+  lanelet::Lanelet priority = lanelet_between(50, left_0, left_2, right_0, right_2);
+  const lanelet::Lanelet first_junction = lanelet_between(51, left_2, left_12, right_2, right_12);
+  const lanelet::Lanelet second_junction = lanelet_between(52, left_12, left_24, right_12, right_24);
+  const lanelet::Lanelet exit = lanelet_between(53, left_24, point(40.0, 1.0), right_24, point(40.0, -1.0));
+  const lanelet::Lanelet crossing = lanelet_between(54, point(6.0, -10.0), point(6.0, 10.0), point(8.0, -10.0), point(8.0, 10.0));
+  const auto side_left = point(12.0, -10.0), side_right = point(14.0, -10.0);
+  lanelet::Lanelet side_street = lanelet_between(55, point(12.0, -20.0), side_left, point(14.0, -20.0), side_right);
+  const lanelet::Lanelet right_turn = lanelet_between(56, side_left, left_24, side_right, right_24);
+  lanelet::AttributeMap attributes;
+  attributes[lanelet::AttributeName::Type] = lanelet::AttributeValueString::RegulatoryElement;
+  attributes[lanelet::AttributeName::Subtype] = lanelet::RightOfWay::RuleName;
+  const lanelet::LineString3d stop_line(lanelet::utils::getId(), {point(12.0, -10.0), point(14.0, -10.0)});
+  const auto rule = lanelet::RightOfWay::make(lanelet::utils::getId(), attributes, {priority}, {side_street}, stop_line);
+  side_street.addRegulatoryElement(rule);
+  priority.addRegulatoryElement(rule);
+  lanelet::LaneletMap map;
+  for (const auto& lanelet : {priority, first_junction, second_junction, exit, crossing, side_street, right_turn})
+    map.add(lanelet);
+  const auto bicycle_rules = lanelet::traffic_rules::TrafficRulesFactory::create(
+      static_cast<const char*>(lanelet::Locations::Germany), static_cast<const char*>(lanelet::Participants::Bicycle));
+  const auto graph = lanelet::routing::RoutingGraph::build(map, *bicycle_rules);
+
+  std::vector<lanelet::Id> path_ids;
+  for (const auto& lanelet : priorityPath(*rule, *graph)) path_ids.push_back(lanelet.id());
+  std::sort(path_ids.begin(), path_ids.end());
+  EXPECT_EQ(path_ids, (std::vector<lanelet::Id>{50, 51, 52}));
+  EXPECT_TRUE(laneletConflictsWithPriorityContinuation(right_turn, *rule, *graph));
+  const lanelet::routing::LaneletPath turning_route({side_street, right_turn, exit});
+  EXPECT_EQ(conflictLaneletAtYieldLine(turning_route, 0, 0, *rule, *graph), 1U);
+
+  perception_msgs::msg::EgoData ego;
+  ego.state.header.stamp.sec = 0;
+  ego.state.model_id = 1;
+  ego.state.continuous_state.resize(13);
+  ego.state.continuous_state[0] = 14.0;
+  perception_msgs::msg::ObjectState future = ego.state;
+  future.header.stamp.sec = 2;
+  future.continuous_state[0] = 30.0;
+  ego.trajectory_planned.push_back(future);
+  const rclcpp::Time now(0, 0, RCL_ROS_TIME);
+  EXPECT_FALSE(egoRouteOccupancy(ego, now, 6.0, {priority}, right_turn).has_value());
+  const auto occupancy = egoRouteOccupancy(ego, now, 6.0, priorityPath(*rule, *graph), right_turn);
+  ASSERT_TRUE(occupancy.has_value());
+  EXPECT_NEAR(occupancy->entry, 0.0, 1e-6);
+  EXPECT_NEAR(occupancy->exit, 1.25, 0.1);
+}
+
 TEST(YieldInteraction, DetectsOnlyOverlappingOccupancyIntervals) {
   EXPECT_TRUE(intervalsOverlap(TimeInterval{1.0, 3.0}, TimeInterval{2.0, 4.0}));
   EXPECT_FALSE(intervalsOverlap(TimeInterval{1.0, 2.0}, TimeInterval{2.1, 4.0}));
@@ -216,7 +276,6 @@ TEST(YieldInteraction, InterpolatesEgoAcrossShortPriorityLaneletAndKeepsConflict
 }
 
 TEST(YieldInteraction, RequiresClearanceBeforePriorityArrives) {
-  // Leaving the conflict 0.2 s before ego arrives is no acceptable gap.
   EXPECT_TRUE(conflictsDuringClearance(TimeInterval{0.9, 5.8}, TimeInterval{6.0, 7.4}, 1.0));
   EXPECT_FALSE(conflictsDuringClearance(TimeInterval{0.9, 4.8}, TimeInterval{6.0, 7.4}, 1.0));
 }

@@ -43,6 +43,7 @@ constexpr double kMotionDirectionMinSpeedMps = 0.3;
 constexpr double kMinAlongLaneSpeedFraction = 0.25;
 constexpr double kMotionTangentSampleDistanceM = 0.05;
 constexpr double kRoundaboutLookaheadM = 5.0;
+constexpr double kPriorityJunctionLengthM = 30.0;
 
 bool isBicycleClass(uint8_t type) {
   return type == perception_msgs::msg::ObjectClassification::BICYCLE ||
@@ -429,15 +430,41 @@ std::optional<YieldLineProjection> projectYieldLineOnRoute(const lanelet::routin
   return nearest;
 }
 
+/** Priority lanelets and the junction lanelets they lead into: successors that conflict with other lanelets and
+ * start within kPriorityJunctionLengthM after a priority lanelet. Priority lanelets are often only a short
+ * approach; priority traffic keeps its right of way until it has crossed the junction. */
+std::vector<lanelet::ConstLanelet> priorityPath(const lanelet::RightOfWay& right_of_way,
+                                                const lanelet::routing::RoutingGraph& routing_graph) {
+  std::vector<lanelet::ConstLanelet> path;
+  std::unordered_set<lanelet::Id> visited;
+  std::vector<std::pair<lanelet::ConstLanelet, double>> frontier;
+  for (const lanelet::ConstLanelet& priority_lanelet : right_of_way.rightOfWayLanelets()) {
+    if (!visited.insert(priority_lanelet.id()).second) continue;
+    path.push_back(priority_lanelet);
+    frontier.emplace_back(priority_lanelet, 0.0);
+  }
+  while (!frontier.empty()) {
+    const auto [lanelet, distance_to_end] = frontier.back();
+    frontier.pop_back();
+    for (const lanelet::ConstLanelet& following : routing_graph.following(lanelet)) {
+      if (distance_to_end > kPriorityJunctionLengthM || routing_graph.conflicting(following).empty() ||
+          !visited.insert(following.id()).second) {
+        continue;
+      }
+      path.push_back(following);
+      frontier.emplace_back(following,
+                            distance_to_end + static_cast<double>(lanelet::geometry::length(following.centerline2d())));
+    }
+  }
+  return path;
+}
+
 bool laneletConflictsWithPriorityContinuation(const lanelet::ConstLanelet& route_lanelet,
                                               const lanelet::RightOfWay& right_of_way,
                                               const lanelet::routing::RoutingGraph& routing_graph) {
   std::unordered_set<lanelet::Id> priority_path_ids;
-  for (const lanelet::ConstLanelet& priority_lanelet : right_of_way.rightOfWayLanelets()) {
-    priority_path_ids.insert(priority_lanelet.id());
-    for (const lanelet::ConstLanelet& following : routing_graph.following(priority_lanelet)) {
-      priority_path_ids.insert(following.id());
-    }
+  for (const lanelet::ConstLanelet& lanelet : priorityPath(right_of_way, routing_graph)) {
+    priority_path_ids.insert(lanelet.id());
   }
   const auto conflicts = routing_graph.conflicting(route_lanelet);
   return std::any_of(conflicts.begin(), conflicts.end(), [&](const lanelet::ConstLaneletOrArea& conflict) {
@@ -1469,13 +1496,15 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
             continue;
           }
 
-          std::unordered_set<lanelet::Id> priority_lanelet_ids;
-          for (const lanelet::ConstLanelet& priority_lanelet : right_of_way->rightOfWayLanelets()) {
-            priority_lanelet_ids.insert(priority_lanelet.id());
-          }
-          if (priority_lanelet_ids.empty() || routing_graph == nullptr) {
+          if (right_of_way->rightOfWayLanelets().empty() || routing_graph == nullptr) {
             RCLCPP_DEBUG_STREAM(yield_logger, rule_prefix << "no priority lanelets");
             continue;
+          }
+          // Priority traffic counts from its approach until it has crossed the junction
+          const std::vector<lanelet::ConstLanelet> priority_lanelets = priorityPath(*right_of_way, *routing_graph);
+          std::unordered_set<lanelet::Id> priority_lanelet_ids;
+          for (const lanelet::ConstLanelet& priority_lanelet : priority_lanelets) {
+            priority_lanelet_ids.insert(priority_lanelet.id());
           }
 
           double yield_line_distance = 0.0;
@@ -1527,11 +1556,6 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
           }
 
           double latest_clearance = -std::numeric_limits<double>::infinity();
-          std::vector<lanelet::ConstLanelet> priority_lanelets;
-          priority_lanelets.reserve(priority_lanelet_ids.size());
-          for (const lanelet::ConstLanelet& priority_lanelet : right_of_way->rightOfWayLanelets()) {
-            priority_lanelets.push_back(priority_lanelet);
-          }
           const lanelet::ConstLanelet& conflict_lanelet = hypothesis.route[*conflict_index];
           const std::optional<TimeInterval> ego_interval =
               ego_data ? egoRouteOccupancy(*ego_data, base_stamp, processing_yielding_ego_lookahead_time_, priority_lanelets,
