@@ -10,6 +10,8 @@ Subscribes to a list of objects in an arbitrary sensor frame, transforms them in
 
 For vehicles and other road users, the node matches each object to the nearest lanelet in the map, queries the routing graph for all reachable paths within the prediction horizon, and samples predicted states at fixed time intervals along each path. Pedestrians are not matched to the road network and receive a constant-velocity prediction instead.
 
+Predicted states omit `continuous_state_covariance` because this predictor does not estimate future uncertainty. The current measured object state keeps its original covariance. Consumers that transform or inspect predictions need [the matching `perception_interfaces` change](https://github.com/ika-rwth-aachen/perception_interfaces/pull/28), pinned in the repository's `.repos` file.
+
 ```mermaid
 flowchart LR
     NODE("lanelet2_object_list_prediction")
