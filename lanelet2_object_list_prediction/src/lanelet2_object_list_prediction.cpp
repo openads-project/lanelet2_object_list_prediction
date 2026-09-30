@@ -128,6 +128,34 @@ double remainingRouteLength(const lanelet::routing::LaneletPath& route, double s
   return length;
 }
 
+/** Routes against the legal direction of one-way bicycle lanes, following their
+ * legal predecessors backwards. `start` is the inverted lanelet the bicycle is on. */
+lanelet::routing::LaneletPaths wrongWayBicyclePaths(const lanelet::ConstLanelet& start,
+                                                    double distance_after_start,
+                                                    const lanelet::routing::RoutingGraph& routing_graph) {
+  constexpr std::size_t kMaxPaths = 8;
+  lanelet::routing::LaneletPaths paths;
+  std::function<void(lanelet::ConstLanelets&, double)> extend = [&](lanelet::ConstLanelets& path, double remaining) {
+    bool extended = false;
+    if (remaining > 0.0) {
+      for (const lanelet::ConstLanelet& previous : routing_graph.previous(path.back().invert(), false)) {
+        if (paths.size() >= kMaxPaths) break;
+        const bool visited =
+            std::any_of(path.begin(), path.end(), [&](const auto& lanelet) { return lanelet.id() == previous.id(); });
+        if (!isBicycleLane(previous) || visited) continue;
+        extended = true;
+        path.push_back(previous.invert());
+        extend(path, remaining - static_cast<double>(lanelet::geometry::length(previous.centerline2d())));
+        path.pop_back();
+      }
+    }
+    if (!extended && paths.size() < kMaxPaths) paths.emplace_back(path);
+  };
+  lanelet::ConstLanelets path{start};
+  extend(path, distance_after_start);
+  return paths;
+}
+
 bool startsNearRoundabout(const lanelet::routing::LaneletPath& route, double start_arc_length) {
   double distance_to_lanelet = 0.0;
   for (std::size_t index = 0; index < route.size() && distance_to_lanelet <= kRoundaboutLookaheadM; ++index) {
@@ -1020,7 +1048,11 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       } else if (participant == PredictionParticipant::Pedestrian) {
         matching_rules = pedestrian_traffic_rules_.get();
       }
-      if (matching_rules == nullptr || !matching_rules->canPass(matched_lanelet) ||
+      // Cyclists often ride against the direction of one-way bicycle lanes.
+      const bool wrong_way = participant == PredictionParticipant::Bicycle && matching_rules != nullptr &&
+                             matched_lanelet.inverted() && isBicycleLane(matched_lanelet) &&
+                             !matching_rules->canPass(matched_lanelet) && matching_rules->canPass(matched_lanelet.invert());
+      if (matching_rules == nullptr || (!matching_rules->canPass(matched_lanelet) && !wrong_way) ||
           (classification.type == perception_msgs::msg::ObjectClassification::VRU &&
            matched_lanelet.attributeOr(lanelet::AttributeName::Subtype, std::string{}) ==
                static_cast<const char*>(lanelet::AttributeValueString::Stairs))) {
@@ -1038,15 +1070,27 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
         continue;  // Nearly sideways motion is better represented by the Cartesian fallback.
       }
       const bool reversing = lane_velocity.longitudinal < -kKinematicEpsilon;
+      if (reversing && wrong_way) {
+        reject("wrong-way heading but moving along the legal direction");
+        continue;
+      }
       if (reversing) {
         matched_lanelet = matched_lanelet.invert();
         start_arc_length = lanelet_length - start_arc_length;
       }
       const double centerline_distance =
           std::abs(lanelet::geometry::toArcCoordinates(matched_lanelet.centerline2d(), position_2d).distance);
-      prediction_object.lanelet_matches.push_back(LaneletMatch{
-          matched_lanelet, participant, candidate_lanelet.first, centerline_distance, start_arc_length, orientation_difference,
-          reversing, std::abs(lane_velocity.longitudinal), reversing ? -lane_velocity.lateral : lane_velocity.lateral});
+      prediction_object.lanelet_matches.push_back(
+          LaneletMatch{matched_lanelet, participant, candidate_lanelet.first, centerline_distance, start_arc_length,
+                       orientation_difference, reversing, std::abs(lane_velocity.longitudinal),
+                       reversing ? -lane_velocity.lateral : lane_velocity.lateral, wrong_way});
+    }
+
+    // Wrong-way riding is only assumed when no lanelet is ridden legally.
+    auto& matches = prediction_object.lanelet_matches;
+    if (std::any_of(matches.begin(), matches.end(), [](const LaneletMatch& match) { return !match.wrong_way; })) {
+      matches.erase(std::remove_if(matches.begin(), matches.end(), [](const LaneletMatch& match) { return match.wrong_way; }),
+                    matches.end());
     }
 
     // Bicycle and pedestrian rules also permit some shared or road lanelets.
@@ -1055,7 +1099,6 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       const auto preferred = [&](const LaneletMatch& match) {
         return bicycle ? isBicycleLane(match.lanelet) : isPedestrianLane(match.lanelet);
       };
-      auto& matches = prediction_object.lanelet_matches;
       if (std::any_of(matches.begin(), matches.end(), preferred)) {
         matches.erase(
             std::remove_if(matches.begin(), matches.end(), [&](const LaneletMatch& match) { return !preferred(match); }),
@@ -1127,6 +1170,10 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
     lanelet::routing::LaneletPaths routes;
     if (match.reversing || max_travel_distance <= std::numeric_limits<double>::epsilon()) {
       routes.push_back(lanelet::routing::LaneletPath({match.lanelet}));
+    } else if (match.wrong_way) {
+      const double remaining_on_start =
+          static_cast<double>(lanelet::geometry::length(match.lanelet.centerline2d())) - match.start_arc_length;
+      routes = wrongWayBicyclePaths(match.lanelet, max_travel_distance - remaining_on_start, *routing_graph);
     } else {
       lanelet::routing::PossiblePathsParams params;
       params.routingCostLimit = max_travel_distance + match.start_arc_length;
@@ -1173,8 +1220,8 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
       std::ostringstream route_ids;
       for (const lanelet::ConstLanelet& route_lanelet : lanelet_route) route_ids << " " << route_lanelet.id();
       RCLCPP_DEBUG_STREAM(this->get_logger().get_child("hypotheses"),
-                          "object " << prediction_object.object.id << " route" << route_ids.str() << " (v " << speed
-                                    << " m/s, lateral v " << match.lateral_speed
+                          "object " << prediction_object.object.id << (match.wrong_way ? " wrong-way" : "") << " route"
+                                    << route_ids.str() << " (v " << speed << " m/s, lateral v " << match.lateral_speed
                                     << " m/s): " << (feasible ? "feasible" : infeasibility));
       PredictionObject::Hypothesis hypothesis;
       hypothesis.route = lanelet_route;
@@ -1186,6 +1233,7 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
       hypothesis.initial_speed = speed;
       hypothesis.initial_lateral_speed = match.lateral_speed;
       hypothesis.reversing = match.reversing;
+      hypothesis.wrong_way = match.wrong_way;
       hypothesis.stop_at_route_end = stop_at_route_end;
       hypothesis.feasible = feasible;
       hypothesis.motion_profile = motion_profile.samples;
@@ -1320,7 +1368,8 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
       } else if (hypothesis.participant == PredictionParticipant::Pedestrian) {
         routing_graph = pedestrian_routing_graph_.get();
       }
-      if (hypothesis.reversing) continue;
+      // Right-of-way rules are mapped for the legal direction of travel only.
+      if (hypothesis.reversing || hypothesis.wrong_way) continue;
       std::optional<YieldConstraint> selected_constraint;
       std::ostringstream route_ids;
       for (const lanelet::ConstLanelet& route_lanelet : hypothesis.route) route_ids << " " << route_lanelet.id();

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <lanelet2_core/LaneletMap.h>
 #include <lanelet2_core/primitives/Lanelet.h>
 
 #define main lanelet2_object_list_prediction_main
@@ -245,6 +246,36 @@ TEST(BicycleMatching, UsesBicycleRulesForDedicatedLane) {
   EXPECT_TRUE(isBicycleLane(bicycle_lane));
   EXPECT_TRUE(bicycle_rules->canPass(bicycle_lane));
   EXPECT_FALSE(vehicle_rules->canPass(bicycle_lane));
+}
+
+TEST(BicycleMatching, RoutesWrongWayAlongBicycleLanePredecessors) {
+  auto point = [](double x, double y) { return lanelet::Point3d(lanelet::utils::getId(), x, y, 0.0); };
+  const lanelet::Point3d left_start = point(0.0, 1.0), left_middle = point(20.0, 1.0), left_end = point(40.0, 1.0);
+  const lanelet::Point3d right_start = point(0.0, -1.0), right_middle = point(20.0, -1.0), right_end = point(40.0, -1.0);
+  lanelet::Lanelet first(lanelet::utils::getId(), lanelet::LineString3d(lanelet::utils::getId(), {left_start, left_middle}),
+                         lanelet::LineString3d(lanelet::utils::getId(), {right_start, right_middle}));
+  lanelet::Lanelet second(lanelet::utils::getId(), lanelet::LineString3d(lanelet::utils::getId(), {left_middle, left_end}),
+                          lanelet::LineString3d(lanelet::utils::getId(), {right_middle, right_end}));
+  for (lanelet::Lanelet* lanelet : {&first, &second}) {
+    lanelet->setAttribute(lanelet::AttributeName::Subtype, lanelet::AttributeValueString::BicycleLane);
+    lanelet->setAttribute(lanelet::AttributeName::OneWay, true);
+  }
+  const auto map = lanelet::utils::createMap({first, second});
+  const auto bicycle_rules = lanelet::traffic_rules::TrafficRulesFactory::create(
+      static_cast<const char*>(lanelet::Locations::Germany), static_cast<const char*>(lanelet::Participants::Bicycle));
+  const auto routing_graph = lanelet::routing::RoutingGraph::build(*map, *bicycle_rules);
+
+  // A cyclist on the second lanelet rides back towards the first one.
+  const lanelet::ConstLanelet start = lanelet::ConstLanelet(second).invert();
+  EXPECT_FALSE(bicycle_rules->canPass(start));
+  EXPECT_TRUE(bicycle_rules->canPass(start.invert()));
+  const lanelet::routing::LaneletPaths paths = wrongWayBicyclePaths(start, 10.0, *routing_graph);
+  ASSERT_EQ(paths.size(), 1U);
+  ASSERT_EQ(paths.front().size(), 2U);
+  EXPECT_EQ(paths.front()[0].id(), second.id());
+  EXPECT_EQ(paths.front()[1].id(), first.id());
+  EXPECT_TRUE(paths.front()[1].inverted());
+  EXPECT_NEAR(remainingRouteLength(paths.front(), 5.0), 35.0, 1e-6);
 }
 
 TEST(ParticipantMatching, UsesPedestrianRulesForSidewalkUsers) {

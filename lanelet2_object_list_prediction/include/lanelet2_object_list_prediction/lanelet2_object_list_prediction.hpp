@@ -69,6 +69,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
     bool reversing{false};            ///< Velocity points backward along the legal lanelet
     double longitudinal_speed{0.0};   ///< Speed along the direction of travel
     double lateral_speed{0.0};        ///< Signed velocity across the direction of travel
+    bool wrong_way{false};            ///< Bicycle riding against a one-way bicycle lane
   };
 
   /**
@@ -87,6 +88,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
       double initial_speed{0.0};
       double initial_lateral_speed{0.0};
       bool reversing{false};
+      bool wrong_way{false};
       bool stop_at_route_end{false};
       bool feasible{true};
       std::vector<RouteMotionSample> motion_profile;
