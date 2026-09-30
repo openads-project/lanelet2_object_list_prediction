@@ -51,9 +51,12 @@ struct RouteMotionProfile {
  */
 class SmoothedRoute {
  public:
+  /** Route starting at the object's arc length on the first lanelet. */
   SmoothedRoute(lanelet::routing::LaneletPath route, double start_arc_length);
 
+  /** Whether the route contains no lanelets. */
   bool empty() const { return route_.empty(); }
+  /** Remaining route length ahead of the object. */
   double length() const { return length_; }
   /** Median-filtered route heading at a travel distance. */
   double yaw(double travel_distance) const;
