@@ -55,7 +55,7 @@ def generate_launch_description():
             session_name="trace",
             dual_session=True,
             condition=IfCondition(LaunchConfiguration("ros_tracing")),
-        )
+        ),
     ]
 
     return LaunchDescription(
