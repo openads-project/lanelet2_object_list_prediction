@@ -204,10 +204,6 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
                                   const builtin_interfaces::msg::Time& base_time,
                                   const std::optional<perception_msgs::msg::EgoData>& ego_data) const;
 
-  /** Removes infeasible hypotheses unless none is feasible, so a matched object
-   * never loses all of its map-based predictions. */
-  void removeInfeasibleHypotheses(PredictionObject& prediction_object) const;
-
   /** Rebuilds sampled messages from retained motion profiles and normalizes
    * their probabilities. */
   void finalizeMapBasedPredictions(PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;

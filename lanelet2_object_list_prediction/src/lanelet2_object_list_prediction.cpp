@@ -1285,6 +1285,7 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
                           "object " << prediction_object.object.id << (match.wrong_way ? " wrong-way" : "") << " route"
                                     << route_ids.str() << " (v " << speed << " m/s, lateral v " << match.lateral_speed
                                     << " m/s): " << (feasible ? "feasible" : infeasibility));
+      if (!feasible && output_infeasible_hypothesis_probability_ == 0.0) continue;
       PredictionObject::Hypothesis hypothesis;
       hypothesis.route = lanelet_route;
       hypothesis.participant = match.participant;
@@ -1304,26 +1305,10 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
       prediction_object.hypotheses.push_back(std::move(hypothesis));
     }
   }
-  removeInfeasibleHypotheses(prediction_object);
-}
-
-void Lanelet2ObjectListPrediction::removeInfeasibleHypotheses(PredictionObject& prediction_object) const {
-  auto& hypotheses = prediction_object.hypotheses;
-  const auto infeasible = [](const PredictionObject::Hypothesis& hypothesis) { return !hypothesis.feasible; };
-  if (output_infeasible_hypothesis_probability_ > 0.0 || hypotheses.empty()) return;
-  // A matched object keeps its infeasible hypotheses when no feasible one is
-  // left. Otherwise it would briefly fall back to a static prediction.
-  if (std::all_of(hypotheses.begin(), hypotheses.end(), infeasible)) {
-    RCLCPP_DEBUG(this->get_logger().get_child("hypotheses"), "object %lu: all %zu hypotheses infeasible, keeping them",
-                 static_cast<unsigned long>(prediction_object.object.id), hypotheses.size());
-    return;
-  }
-  hypotheses.erase(std::remove_if(hypotheses.begin(), hypotheses.end(), infeasible), hypotheses.end());
 }
 
 void Lanelet2ObjectListPrediction::finalizeMapBasedPredictions(PredictionObject& prediction_object,
                                                                const builtin_interfaces::msg::Time& base_time) const {
-  removeInfeasibleHypotheses(prediction_object);
   const std::size_t sample_count = getPredictionSampleCount();
   for (PredictionObject::Hypothesis& hypothesis : prediction_object.hypotheses) {
     hypothesis.prediction.states.clear();
@@ -1336,6 +1321,13 @@ void Lanelet2ObjectListPrediction::finalizeMapBasedPredictions(PredictionObject&
                                     hypothesis.geometry_start_arc_length, motion.distance, motion.speed, hypothesis.initial_speed,
                                     hypothesis.initial_lateral_speed, hypothesis.reversing, base_time, sample_index));
     }
+  }
+
+  if (output_infeasible_hypothesis_probability_ == 0.0) {
+    prediction_object.hypotheses.erase(
+        std::remove_if(prediction_object.hypotheses.begin(), prediction_object.hypotheses.end(),
+                       [](const PredictionObject::Hypothesis& hypothesis) { return !hypothesis.feasible; }),
+        prediction_object.hypotheses.end());
   }
 
   const std::size_t feasible_count =
@@ -1725,15 +1717,8 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
             }
             continue;
           }
-          // Only infeasible hypotheses are kept when none is feasible, and they still block followers.
-          const bool leader_has_feasible_hypothesis =
-              std::any_of(leader_object.hypotheses.begin(), leader_object.hypotheses.end(),
-                          [](const PredictionObject::Hypothesis& hypothesis) { return hypothesis.feasible; });
           for (const PredictionObject::Hypothesis& leader : leader_object.hypotheses) {
-            if (leader.reversing || leader.route.empty() || leader.motion_profile.empty() ||
-                (!leader.feasible && leader_has_feasible_hypothesis)) {
-              continue;
-            }
+            if (leader.reversing || leader.route.empty() || leader.motion_profile.empty() || !leader.feasible) continue;
             const RouteMotionSample now = sampleRouteMotionAtTime(leader.motion_profile, time);
             const RouteMotionSample next = sampleRouteMotionAtTime(leader.motion_profile, next_time);
             const auto [lanelet_index, arc_length] = laneletAtRouteDistance(leader.route, leader.start_arc_length, next.distance);
