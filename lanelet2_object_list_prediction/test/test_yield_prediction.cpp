@@ -215,6 +215,12 @@ TEST(YieldInteraction, InterpolatesEgoAcrossShortPriorityLaneletAndKeepsConflict
   EXPECT_FALSE(conflictsDuringClearance(TimeInterval{7.5, 8.0}, *occupancy, 1.0));
 }
 
+TEST(YieldInteraction, RequiresClearanceBeforePriorityArrives) {
+  // Leaving the conflict 0.2 s before ego arrives is no acceptable gap.
+  EXPECT_TRUE(conflictsDuringClearance(TimeInterval{0.9, 5.8}, TimeInterval{6.0, 7.4}, 1.0));
+  EXPECT_FALSE(conflictsDuringClearance(TimeInterval{0.9, 4.8}, TimeInterval{6.0, 7.4}, 1.0));
+}
+
 TEST(FollowingInteraction, MatchesOnlyTheSameDirectedLanelet) {
   const lanelet::routing::LaneletPath route({makeStraightLanelet(60)});
   EXPECT_NEAR(*projectLeaderOnRoute(route, 0.0, lanelet::BasicPoint2d(8.0, 0.0), 0.0, 60), 8.0, 1e-6);
@@ -260,6 +266,37 @@ TEST(FollowingInteraction, MarksAnUnavoidableCloseLeaderInfeasibleWithoutJump) {
   EXPECT_FALSE(step.feasible);
   EXPECT_NEAR(step.sample.speed, 9.8, 1e-6);
   EXPECT_GT(step.sample.distance, initial.distance);
+}
+
+TEST(YieldInteraction, ExtrapolatesEgoPlanEndingBeforePriorityLanelet) {
+  auto makeLanelet = [](lanelet::Id id, double start, double end) {
+    lanelet::LineString3d left(lanelet::utils::getId(), {lanelet::Point3d(lanelet::utils::getId(), start, 1.0, 0.0),
+                                                         lanelet::Point3d(lanelet::utils::getId(), end, 1.0, 0.0)});
+    lanelet::LineString3d right(lanelet::utils::getId(), {lanelet::Point3d(lanelet::utils::getId(), start, -1.0, 0.0),
+                                                          lanelet::Point3d(lanelet::utils::getId(), end, -1.0, 0.0)});
+    return lanelet::Lanelet(id, left, right);
+  };
+  const lanelet::Lanelet priority = makeLanelet(40, 10.0, 12.0);
+  const lanelet::Lanelet conflict = makeLanelet(41, 12.0, 14.0);
+  perception_msgs::msg::EgoData ego;
+  ego.state.header.stamp.sec = 0;
+  ego.state.model_id = 1;
+  ego.state.continuous_state.resize(13);
+  // The plan brakes and ends 4 m before the priority lanelet at 2 m/s.
+  for (const auto& [time, x] : std::vector<std::pair<int, double>>{{1, 4.0}, {2, 6.0}}) {
+    perception_msgs::msg::ObjectState future;
+    future.header.stamp.sec = time;
+    future.model_id = 1;
+    future.continuous_state.resize(13);
+    future.continuous_state[0] = x;
+    ego.trajectory_planned.push_back(future);
+  }
+
+  EXPECT_FALSE(egoRouteOccupancy(ego, rclcpp::Time(0, 0, RCL_ROS_TIME), 2.0, {priority}, conflict).has_value());
+  const auto occupancy = egoRouteOccupancy(ego, rclcpp::Time(0, 0, RCL_ROS_TIME), 8.0, {priority}, conflict);
+  ASSERT_TRUE(occupancy.has_value());
+  EXPECT_NEAR(occupancy->entry, 4.0, 0.25);
+  EXPECT_NEAR(occupancy->exit, 6.0, 0.25);
 }
 
 TEST(YieldInteraction, AcceptsSmallTimestampOffsetsInEitherDirection) {

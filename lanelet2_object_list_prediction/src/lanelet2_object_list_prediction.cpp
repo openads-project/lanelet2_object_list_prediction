@@ -7,6 +7,8 @@
 #include <limits>
 #include <numeric>
 #include <optional>
+#include <sstream>
+#include <string>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -465,8 +467,10 @@ bool intervalsOverlap(const TimeInterval& lhs, const TimeInterval& rhs) {
   return lhs.entry <= rhs.exit + kKinematicEpsilon && rhs.entry <= lhs.exit + kKinematicEpsilon;
 }
 
+// The yielding participant needs the clearance gap on both sides: leaving the
+// conflict just before priority traffic arrives is no acceptable gap either.
 bool conflictsDuringClearance(const TimeInterval& yielding, const TimeInterval& priority, double clearance_time) {
-  return intervalsOverlap(yielding, TimeInterval{priority.entry, priority.exit + clearance_time});
+  return intervalsOverlap(yielding, TimeInterval{priority.entry - clearance_time, priority.exit + clearance_time});
 }
 
 std::optional<TimeInterval> egoRouteOccupancy(const perception_msgs::msg::EgoData& ego_data,
@@ -492,6 +496,32 @@ std::optional<TimeInterval> egoRouteOccupancy(const perception_msgs::msg::EgoDat
   append(ego_data.state);
   for (const auto& state : ego_data.trajectory_planned) append(state);
   std::sort(positions.begin(), positions.end(), [](const auto& lhs, const auto& rhs) { return lhs.time < rhs.time; });
+
+  // A short or braking plan can end before the priority lanelets although ego
+  // keeps its right of way. Continue it straight at no less than the current
+  // speed, so a plan braking for a crossing object cannot hide ego from it.
+  if (positions.size() >= 2 && positions.back().time < horizon - kKinematicEpsilon) {
+    const TimedPosition& last = positions.back();
+    const TimedPosition& previous = positions[positions.size() - 2];
+    const lanelet::BasicPoint2d motion = last.position - previous.position;
+    const double dt = last.time - previous.time;
+    double current_speed = 0.0;
+    try {
+      const auto velocity = perception_msgs::object_access::getVelocityXYZ(ego_data.state);
+      current_speed = std::hypot(velocity.x, velocity.y);
+    } catch (const std::exception&) {
+    }
+    const double final_speed = dt > kKinematicEpsilon ? motion.norm() / dt : 0.0;
+    double yaw = std::atan2(motion.y(), motion.x());
+    if (motion.norm() <= kKinematicEpsilon) {
+      try {
+        yaw = perception_msgs::object_access::getYaw(ego_data.state);
+      } catch (const std::exception&) {
+      }
+    }
+    const double extrapolation = (horizon - last.time) * std::max(current_speed, final_speed);
+    positions.push_back({horizon, last.position + extrapolation * lanelet::BasicPoint2d(std::cos(yaw), std::sin(yaw))});
+  }
 
   std::optional<TimeInterval> priority_interval;
   std::optional<TimeInterval> conflict_interval;
@@ -641,6 +671,9 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
                                 "name of lanelet2_map_server node", false, false, true);
   this->declareAndLoadParameter("processing.map_matching.max_distance", processing_map_matching_max_distance_,
                                 "max distance from a lanelet to consider it a match [m]", true, false, false, 0.0, 100.0, 0.1);
+  this->declareAndLoadParameter("processing.map_matching.bicycle_max_distance", processing_map_matching_bicycle_max_distance_,
+                                "max distance from a lanelet to consider it a match for bicycles, riding at lane edges [m]", true,
+                                false, false, 0.0, 100.0, 0.1);
   this->declareAndLoadParameter("processing.map_matching.max_delta_yaw_deg", processing_map_matching_max_delta_yaw_deg_,
                                 "max yaw difference from a lanelet direction to consider it a match [deg]", true, false, false,
                                 0.0, 180.0);
@@ -662,7 +695,10 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
   this->declareAndLoadParameter("processing.yielding.clearance_distance", processing_yielding_clearance_distance_,
                                 "clearance between front and yield line [m]", true, false, false, 0.0, 20.0, 0.1);
   this->declareAndLoadParameter("processing.yielding.clearance_time", processing_yielding_clearance_time_,
-                                "time to wait after priority traffic has cleared [s]", true, false, false, 0.0, 20.0, 0.1);
+                                "time gap required before and after priority traffic [s]", true, false, false, 0.0, 20.0, 0.1);
+  this->declareAndLoadParameter("processing.yielding.ego_lookahead_time", processing_yielding_ego_lookahead_time_,
+                                "time up to which ego's right of way is considered, extrapolating its planned trajectory [s]",
+                                true, false, false, 0.0, 30.0, 0.1);
   this->declareAndLoadParameter("processing.following.enable", processing_following_enable_,
                                 "enable following, avoiding collisions with leading objects");
   this->declareAndLoadParameter("processing.following.headway_distance", processing_following_headway_distance_,
@@ -841,11 +877,19 @@ void Lanelet2ObjectListPrediction::objectListCallback(const perception_msgs::msg
   }
 
   std::optional<perception_msgs::msg::EgoData> ego_data_map_frame;
-  if ((processing_yielding_enable_ || processing_following_enable_) && latest_ego_data_ != nullptr &&
-      !latest_ego_data_->trajectory_planned.empty()) {
+  if ((processing_yielding_enable_ || processing_following_enable_) && latest_ego_data_ == nullptr) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000, "No ego data received on '%s', ignoring ego interaction",
+                         ego_data_subscriber_->get_topic_name());
+  } else if ((processing_yielding_enable_ || processing_following_enable_) && latest_ego_data_->trajectory_planned.empty()) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                         "Ego data has no planned trajectory, ignoring ego interaction");
+  } else if (processing_yielding_enable_ || processing_following_enable_) {
     const double ego_age =
         (rclcpp::Time(object_list_map_frame.header.stamp) - rclcpp::Time(latest_ego_data_->header.stamp)).seconds();
-    if (isEgoDataTimestampUsable(ego_age, input_ego_data_timeout_)) {
+    if (!isEgoDataTimestampUsable(ego_age, input_ego_data_timeout_)) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                           "Ego data is %.2f s older than the object list, ignoring ego interaction", ego_age);
+    } else {
       try {
         if (latest_ego_data_->state.header.frame_id == ll2_interface_->map_frame_id_) {
           ego_data_map_frame = *latest_ego_data_;
@@ -923,11 +967,19 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
 
     const double planar_speed = std::hypot(velocity.x, velocity.y);
     const lanelet::BasicPoint2d position_2d(position.x, position.y);
-    const auto candidate_lanelets =
-        lanelet::geometry::findWithin2d(map->laneletLayer, position_2d, processing_map_matching_max_distance_);
+    // Cyclists often ride at the edge of or between mapped lanes.
+    const double max_distance =
+        bicycle ? std::max(processing_map_matching_max_distance_, processing_map_matching_bicycle_max_distance_)
+                : processing_map_matching_max_distance_;
+    const auto candidate_lanelets = lanelet::geometry::findWithin2d(map->laneletLayer, position_2d, max_distance);
 
+    const rclcpp::Logger matching_logger = this->get_logger().get_child("matching");
     for (const auto& candidate_lanelet : candidate_lanelets) {
       lanelet::ConstLanelet lanelet = candidate_lanelet.second;
+      const auto reject = [&](const std::string& reason) {
+        RCLCPP_DEBUG_STREAM(matching_logger, "object " << prediction_object.object.id << ": lanelet " << lanelet.id() << " ("
+                                                       << candidate_lanelet.first << " m) rejected, " << reason);
+      };
       lanelet::ConstLanelet matched_lanelet = lanelet;
       double start_arc_length = lanelet::geometry::toArcCoordinates(lanelet.centerline2d(), position_2d).length;
       const double lanelet_length = static_cast<double>(lanelet::geometry::length(lanelet.centerline2d()));
@@ -949,6 +1001,7 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       }
 
       if (orientation_difference > processing_map_matching_max_delta_yaw_deg_ * M_PI / 180.0) {
+        reject("yaw difference " + std::to_string(orientation_difference * 180.0 / M_PI) + " deg");
         continue;
       }
 
@@ -971,6 +1024,9 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
           (classification.type == perception_msgs::msg::ObjectClassification::VRU &&
            matched_lanelet.attributeOr(lanelet::AttributeName::Subtype, std::string{}) ==
                static_cast<const char*>(lanelet::AttributeValueString::Stairs))) {
+        reject(std::string("traffic rules forbid ") + (matched_lanelet.inverted() ? "inverted " : "") +
+               matched_lanelet.attributeOr(lanelet::AttributeName::Subtype, std::string{"lanelet"}) +
+               (matching_rules != nullptr && matching_rules->canPass(matched_lanelet.invert()) ? "" : " (in both directions)"));
         continue;
       }
 
@@ -978,6 +1034,7 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       const LaneletVelocity lane_velocity = velocityAlongLanelet(velocity, matched_yaw);
       if (planar_speed >= kMotionDirectionMinSpeedMps &&
           std::abs(lane_velocity.longitudinal) < kMinAlongLaneSpeedFraction * planar_speed) {
+        reject("moving sideways");
         continue;  // Nearly sideways motion is better represented by the Cartesian fallback.
       }
       const bool reversing = lane_velocity.longitudinal < -kKinematicEpsilon;
@@ -1007,8 +1064,7 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
     }
 
     if (prediction_object.lanelet_matches.empty()) {
-      RCLCPP_DEBUG(this->get_logger(), "Object %zu did not match any lanelet within %.2f m", object_index,
-                   processing_map_matching_max_distance_);
+      RCLCPP_DEBUG(this->get_logger(), "Object %zu did not match any lanelet within %.2f m", object_index, max_distance);
     } else {
       RCLCPP_DEBUG(this->get_logger(), "Object %zu matched to %zu lanelet candidate(s)", object_index,
                    prediction_object.lanelet_matches.size());
@@ -1031,6 +1087,10 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
   }
 
   if (predictions.empty()) {
+    RCLCPP_DEBUG(this->get_logger().get_child("hypotheses"),
+                 "object %lu: no map-based hypothesis (%zu lanelet matches), %s fallback",
+                 static_cast<unsigned long>(prediction_object.object.id), prediction_object.lanelet_matches.size(),
+                 processing_map_matching_fallback_mode_.c_str());
     if (processing_map_matching_fallback_mode_ == "static") {
       predictions.push_back(createStationaryPrediction(prediction_object.object, base_time));
     } else {
@@ -1092,6 +1152,7 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
           processing_kinematic_limitations_max_longitudinal_deceleration_, stop_at_route_end, std::nullopt,
           processing_kinematic_limitations_enable_);
       bool feasible = motion_profile.feasible;
+      const char* infeasibility = feasible ? "" : "curve speed not reachable";
       if (processing_kinematic_limitations_enable_ && feasible) {
         const RouteMotionSample first_motion = sampleRouteMotionAtTime(motion_profile.samples, output_sample_interval_);
         const perception_msgs::msg::ObjectState first_state = sampleStateOnLaneletRoute(
@@ -1107,8 +1168,14 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
                                   processing_roundabout_enable_ && startsNearRoundabout(lanelet_route, match.start_arc_length)
                                       ? processing_roundabout_initial_alignment_tolerance_
                                       : 0.0);
+        if (!feasible) infeasibility = "initial motion not reachable";
       }
-      if (!feasible && output_infeasible_hypothesis_probability_ == 0.0) continue;
+      std::ostringstream route_ids;
+      for (const lanelet::ConstLanelet& route_lanelet : lanelet_route) route_ids << " " << route_lanelet.id();
+      RCLCPP_DEBUG_STREAM(this->get_logger().get_child("hypotheses"),
+                          "object " << prediction_object.object.id << " route" << route_ids.str() << " (v " << speed
+                                    << " m/s, lateral v " << match.lateral_speed
+                                    << " m/s): " << (feasible ? "feasible" : infeasibility));
       PredictionObject::Hypothesis hypothesis;
       hypothesis.route = lanelet_route;
       hypothesis.participant = match.participant;
@@ -1125,10 +1192,26 @@ void Lanelet2ObjectListPrediction::createMapBasedPredictions(PredictionObject& p
       prediction_object.hypotheses.push_back(std::move(hypothesis));
     }
   }
+  removeInfeasibleHypotheses(prediction_object);
+}
+
+void Lanelet2ObjectListPrediction::removeInfeasibleHypotheses(PredictionObject& prediction_object) const {
+  auto& hypotheses = prediction_object.hypotheses;
+  const auto infeasible = [](const PredictionObject::Hypothesis& hypothesis) { return !hypothesis.feasible; };
+  if (output_infeasible_hypothesis_probability_ > 0.0 || hypotheses.empty()) return;
+  // A matched object keeps its infeasible hypotheses when no feasible one is
+  // left. Otherwise it would briefly fall back to a static prediction.
+  if (std::all_of(hypotheses.begin(), hypotheses.end(), infeasible)) {
+    RCLCPP_DEBUG(this->get_logger().get_child("hypotheses"), "object %lu: all %zu hypotheses infeasible, keeping them",
+                 static_cast<unsigned long>(prediction_object.object.id), hypotheses.size());
+    return;
+  }
+  hypotheses.erase(std::remove_if(hypotheses.begin(), hypotheses.end(), infeasible), hypotheses.end());
 }
 
 void Lanelet2ObjectListPrediction::finalizeMapBasedPredictions(PredictionObject& prediction_object,
                                                                const builtin_interfaces::msg::Time& base_time) const {
+  removeInfeasibleHypotheses(prediction_object);
   const std::size_t sample_count = getPredictionSampleCount();
   for (PredictionObject::Hypothesis& hypothesis : prediction_object.hypotheses) {
     hypothesis.prediction.states.clear();
@@ -1140,13 +1223,6 @@ void Lanelet2ObjectListPrediction::finalizeMapBasedPredictions(PredictionObject&
           prediction_object.object.state, hypothesis.route, hypothesis.start_arc_length, motion.distance, motion.speed,
           hypothesis.initial_speed, hypothesis.initial_lateral_speed, hypothesis.reversing, base_time, sample_index));
     }
-  }
-
-  if (output_infeasible_hypothesis_probability_ == 0.0) {
-    prediction_object.hypotheses.erase(
-        std::remove_if(prediction_object.hypotheses.begin(), prediction_object.hypotheses.end(),
-                       [](const PredictionObject::Hypothesis& hypothesis) { return !hypothesis.feasible; }),
-        prediction_object.hypotheses.end());
   }
 
   const std::size_t feasible_count =
@@ -1181,6 +1257,7 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
   if (map == nullptr) return;
 
   const rclcpp::Time base_stamp(base_time);
+  const rclcpp::Logger yield_logger = this->get_logger().get_child("yield");
 
   auto routeOccupancy = [](const PredictionObject::Hypothesis& hypothesis, const std::unordered_set<lanelet::Id>& lanelet_ids,
                            const lanelet::ConstLanelet& conflict_lanelet) -> std::optional<TimeInterval> {
@@ -1245,16 +1322,31 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
       }
       if (hypothesis.reversing) continue;
       std::optional<YieldConstraint> selected_constraint;
+      std::ostringstream route_ids;
+      for (const lanelet::ConstLanelet& route_lanelet : hypothesis.route) route_ids << " " << route_lanelet.id();
+      const std::string log_prefix = "object " + std::to_string(prediction_object.object.id) + " hypothesis " +
+                                     std::to_string(hypothesis_index) + " (route" + route_ids.str() + ", v " +
+                                     std::to_string(hypothesis.initial_speed) + " m/s)";
+      std::size_t evaluated_rules = 0;
       auto evaluateRule = [&](const lanelet::ConstLanelet& regulating_lanelet, std::size_t route_index,
                               bool regulating_lanelet_on_route) {
         for (const auto& right_of_way : regulating_lanelet.regulatoryElementsAs<lanelet::RightOfWay>()) {
-          if (right_of_way->getManeuver(regulating_lanelet) != lanelet::ManeuverType::Yield) continue;
+          ++evaluated_rules;
+          const std::string rule_prefix = log_prefix + " rule " + std::to_string(right_of_way->id()) + " on " +
+                                          std::to_string(regulating_lanelet.id()) + ": ";
+          if (right_of_way->getManeuver(regulating_lanelet) != lanelet::ManeuverType::Yield) {
+            RCLCPP_DEBUG_STREAM(yield_logger, rule_prefix << "lanelet has right of way");
+            continue;
+          }
 
           std::unordered_set<lanelet::Id> priority_lanelet_ids;
           for (const lanelet::ConstLanelet& priority_lanelet : right_of_way->rightOfWayLanelets()) {
             priority_lanelet_ids.insert(priority_lanelet.id());
           }
-          if (priority_lanelet_ids.empty() || routing_graph == nullptr) continue;
+          if (priority_lanelet_ids.empty() || routing_graph == nullptr) {
+            RCLCPP_DEBUG_STREAM(yield_logger, rule_prefix << "no priority lanelets");
+            continue;
+          }
 
           double yield_line_distance = 0.0;
           std::size_t interval_end_index = route_index;
@@ -1262,22 +1354,35 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
           if (stop_line.has_value() && !stop_line->empty()) {
             const auto projection =
                 projectYieldLineOnRoute(hypothesis.route, hypothesis.start_arc_length, route_index, *stop_line);
-            if (!projection.has_value()) continue;
+            if (!projection.has_value()) {
+              RCLCPP_DEBUG_STREAM(
+                  yield_logger, rule_prefix << "stop line " << stop_line->id() << " not on route (>5 m away, or already passed)");
+              continue;
+            }
             yield_line_distance = projection->distance;
             interval_end_index = projection->lanelet_index;
           } else {
             // Without a mapped line, the end of the regulating lanelet is the
             // stop position. A predecessor already lies behind this route.
-            if (!regulating_lanelet_on_route) continue;
+            if (!regulating_lanelet_on_route) {
+              RCLCPP_DEBUG_STREAM(yield_logger, rule_prefix << "no stop line and regulating lanelet already passed");
+              continue;
+            }
             const double lanelet_start = routeDistanceAtLaneletStart(hypothesis.route, hypothesis.start_arc_length, route_index);
             const double lanelet_length = static_cast<double>(lanelet::geometry::length(regulating_lanelet.centerline2d()));
             yield_line_distance = lanelet_start + lanelet_length;
           }
 
-          if (yield_line_distance < -kKinematicEpsilon) continue;
+          if (yield_line_distance < -kKinematicEpsilon) {
+            RCLCPP_DEBUG_STREAM(yield_logger, rule_prefix << "yield line passed (" << yield_line_distance << " m)");
+            continue;
+          }
           const std::optional<std::size_t> conflict_index =
               conflictLaneletAtYieldLine(hypothesis.route, route_index, interval_end_index, *right_of_way, *routing_graph);
-          if (!conflict_index) continue;
+          if (!conflict_index) {
+            RCLCPP_DEBUG_STREAM(yield_logger, rule_prefix << "route does not conflict with priority lanelets");
+            continue;
+          }
           interval_end_index = std::max(interval_end_index, *conflict_index);
 
           const double stop_distance = std::max(0.0, yield_line_distance - front_offset);
@@ -1286,7 +1391,10 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
               static_cast<double>(lanelet::geometry::length(hypothesis.route[interval_end_index].centerline2d()));
           const TimeInterval yielding_interval{timeAtRouteDistance(hypothesis.motion_profile, stop_distance),
                                                timeAtRouteDistance(hypothesis.motion_profile, interval_end)};
-          if (!std::isfinite(yielding_interval.entry)) continue;
+          if (!std::isfinite(yielding_interval.entry)) {
+            RCLCPP_DEBUG_STREAM(yield_logger, rule_prefix << "never reaches the stop position " << stop_distance << " m");
+            continue;
+          }
 
           double latest_clearance = -std::numeric_limits<double>::infinity();
           std::vector<lanelet::ConstLanelet> priority_lanelets;
@@ -1296,14 +1404,25 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
           }
           const lanelet::ConstLanelet& conflict_lanelet = hypothesis.route[*conflict_index];
           const std::optional<TimeInterval> ego_interval =
-              ego_data ? egoRouteOccupancy(*ego_data, base_stamp, output_prediction_horizon_, priority_lanelets, conflict_lanelet)
+              ego_data ? egoRouteOccupancy(*ego_data, base_stamp, processing_yielding_ego_lookahead_time_, priority_lanelets,
+                                           conflict_lanelet)
                        : std::nullopt;
+          std::ostringstream ego_log;
+          if (!ego_data) {
+            ego_log << "no ego data";
+          } else if (!ego_interval) {
+            ego_log << "ego not on priority lanelets within horizon";
+          } else {
+            ego_log << "ego on priority lanelets [" << ego_interval->entry << ", " << ego_interval->exit << "] s";
+          }
           if (ego_interval.has_value() &&
               conflictsDuringClearance(yielding_interval, *ego_interval, processing_yielding_clearance_time_)) {
             latest_clearance =
                 std::max(latest_clearance, std::isfinite(ego_interval->exit) ? ego_interval->exit : output_prediction_horizon_);
+            ego_log << " -> conflict";
           }
 
+          std::size_t conflicting_priority_objects = 0;
           for (std::size_t priority_object_index = 0; priority_object_index < prediction_objects.size();
                ++priority_object_index) {
             if (priority_object_index == object_index) continue;
@@ -1315,9 +1434,15 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
                 latest_clearance =
                     std::max(latest_clearance,
                              std::isfinite(priority_interval->exit) ? priority_interval->exit : output_prediction_horizon_);
+                ++conflicting_priority_objects;
               }
             }
           }
+          RCLCPP_DEBUG_STREAM(yield_logger, rule_prefix << "stop at " << stop_distance << " m, occupies conflict ["
+                                                        << yielding_interval.entry << ", " << yielding_interval.exit << "] s, "
+                                                        << ego_log.str() << ", " << conflicting_priority_objects
+                                                        << " conflicting priority hypotheses -> "
+                                                        << (std::isfinite(latest_clearance) ? "yield" : "no yield"));
 
           if (std::isfinite(latest_clearance)) {
             const YieldConstraint constraint{stop_distance, latest_clearance + processing_yielding_clearance_time_};
@@ -1341,6 +1466,9 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
           evaluateRule(predecessor, 0, false);
         }
       }
+      if (evaluated_rules == 0) {
+        RCLCPP_DEBUG_STREAM(yield_logger, log_prefix << ": no right-of-way rule on route or predecessors");
+      }
 
       yield_constraints[object_index][hypothesis_index] = selected_constraint;
     }
@@ -1360,6 +1488,10 @@ void Lanelet2ObjectListPrediction::applyYieldInteractions(std::vector<Prediction
                                     selected_constraint, processing_kinematic_limitations_enable_);
         hypothesis.motion_profile = yielded_profile.samples;
         hypothesis.feasible = hypothesis.feasible && yielded_profile.feasible;
+        RCLCPP_DEBUG(yield_logger, "object %lu hypothesis %zu: yielding at %.2f m until %.2f s, %s",
+                     static_cast<unsigned long>(prediction_object.object.id), hypothesis_index,
+                     selected_constraint->stop_distance, selected_constraint->release_time,
+                     yielded_profile.feasible ? "feasible" : "INFEASIBLE (hypothesis dropped)");
       }
     }
   }
@@ -1479,8 +1611,15 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
             }
             continue;
           }
+          // Only infeasible hypotheses are kept when none is feasible, and they still block followers.
+          const bool leader_has_feasible_hypothesis =
+              std::any_of(leader_object.hypotheses.begin(), leader_object.hypotheses.end(),
+                          [](const PredictionObject::Hypothesis& hypothesis) { return hypothesis.feasible; });
           for (const PredictionObject::Hypothesis& leader : leader_object.hypotheses) {
-            if (leader.reversing || leader.route.empty() || leader.motion_profile.empty() || !leader.feasible) continue;
+            if (leader.reversing || leader.route.empty() || leader.motion_profile.empty() ||
+                (!leader.feasible && leader_has_feasible_hypothesis)) {
+              continue;
+            }
             const RouteMotionSample now = sampleRouteMotionAtTime(leader.motion_profile, time);
             const RouteMotionSample next = sampleRouteMotionAtTime(leader.motion_profile, next_time);
             const auto [lanelet_index, arc_length] = laneletAtRouteDistance(leader.route, leader.start_arc_length, next.distance);

@@ -200,6 +200,10 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
                                   const builtin_interfaces::msg::Time& base_time,
                                   const std::optional<perception_msgs::msg::EgoData>& ego_data) const;
 
+  /** Removes infeasible hypotheses unless none is feasible, so a matched object
+   * never loses all of its map-based predictions. */
+  void removeInfeasibleHypotheses(PredictionObject& prediction_object) const;
+
   /** Rebuilds sampled messages from retained motion profiles and normalizes
    * their probabilities. */
   void finalizeMapBasedPredictions(PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
@@ -330,6 +334,9 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   /** Max distance from a lanelet to consider it a match [m]. */
   double processing_map_matching_max_distance_ = 0.5;
 
+  /** Max distance from a lanelet to consider it a match for bicycles, riding at lane edges [m]. */
+  double processing_map_matching_bicycle_max_distance_ = 1.0;
+
   /** Max yaw difference from a lanelet direction to consider it a match [deg]. */
   double processing_map_matching_max_delta_yaw_deg_ = 90.0;
 
@@ -354,8 +361,11 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   /** Clearance between front and yield line [m]. */
   double processing_yielding_clearance_distance_ = 0.5;
 
-  /** Time to wait after priority traffic has cleared [s]. */
+  /** Time gap required before and after priority traffic [s]. */
   double processing_yielding_clearance_time_ = 1.0;
+
+  /** Time up to which ego's right of way is considered, extrapolating its planned trajectory [s]. */
+  double processing_yielding_ego_lookahead_time_ = 8.0;
 
   /** Enable following, avoiding collisions with leading objects. */
   bool processing_following_enable_ = true;
