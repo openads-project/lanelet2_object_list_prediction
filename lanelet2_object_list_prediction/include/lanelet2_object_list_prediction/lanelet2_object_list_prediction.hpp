@@ -42,6 +42,8 @@ struct RouteMotionProfile {
 
 enum class PredictionParticipant { Vehicle, Bicycle, Pedestrian };
 
+class RouteGeometry;
+
 /**
  * @brief Lanelet2ObjectListPrediction class
  */
@@ -90,6 +92,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
       bool stop_at_route_end{false};
       bool feasible{true};
       std::vector<RouteMotionSample> motion_profile;
+      std::shared_ptr<const RouteGeometry> geometry;  ///< Cached geometry of route
       perception_msgs::msg::ObjectStatePrediction prediction;
     };
 
@@ -228,9 +231,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Samples one predicted state along a lanelet route
    *
    * @param base_state current object state used as template
-   * @param route lanelet route to sample
-   * @param start_arc_length current object position along the first route
-   * lanelet
+   * @param geometry cached geometry of the lanelet route to sample
    * @param travel_distance distance to travel along the route from the current
    * position
    * @param speed longitudinal speed at the sampled position
@@ -242,8 +243,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @return predicted object state at the requested sample
    */
   perception_msgs::msg::ObjectState sampleStateOnLaneletRoute(const perception_msgs::msg::ObjectState& base_state,
-                                                              const lanelet::routing::LaneletPath& route,
-                                                              double start_arc_length,
+                                                              const RouteGeometry& geometry,
                                                               double travel_distance,
                                                               double speed,
                                                               double initial_speed,

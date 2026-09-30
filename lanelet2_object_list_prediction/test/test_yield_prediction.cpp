@@ -20,7 +20,8 @@ lanelet::Lanelet makeStraightLanelet(lanelet::Id id, double y_offset = 0.0) {
 
 TEST(YieldMotionProfile, StopsWaitsAndAcceleratesAfterRelease) {
   const lanelet::routing::LaneletPath route({makeStraightLanelet(1)});
-  const RouteMotionProfile profile = buildRouteMotionProfile(route, 0.0, 4.0, 2.5, 1.0, 2.0, false, YieldConstraint{6.0, 5.0});
+  const RouteMotionProfile profile =
+      buildRouteMotionProfile(RouteGeometry(route, 0.0), 4.0, 2.5, 1.0, 2.0, false, YieldConstraint{6.0, 5.0});
 
   ASSERT_TRUE(profile.feasible);
   const RouteMotionSample waiting = sampleRouteMotionAtTime(profile.samples, 4.5);
@@ -35,7 +36,8 @@ TEST(YieldMotionProfile, StopsWaitsAndAcceleratesAfterRelease) {
 
 TEST(YieldMotionProfile, MarksUnavoidableStopInfeasibleWithoutPositionJump) {
   const lanelet::routing::LaneletPath route({makeStraightLanelet(2)});
-  const RouteMotionProfile profile = buildRouteMotionProfile(route, 0.0, 5.0, 2.5, 1.0, 2.0, false, YieldConstraint{0.5, 3.0});
+  const RouteMotionProfile profile =
+      buildRouteMotionProfile(RouteGeometry(route, 0.0), 5.0, 2.5, 1.0, 2.0, false, YieldConstraint{0.5, 3.0});
 
   EXPECT_FALSE(profile.feasible);
   const RouteMotionSample before = sampleRouteMotionAtTime(profile.samples, 0.05);
@@ -46,7 +48,7 @@ TEST(YieldMotionProfile, MarksUnavoidableStopInfeasibleWithoutPositionJump) {
 
 TEST(YieldMotionProfile, NominalProfileDoesNotStopWithoutConstraint) {
   const lanelet::routing::LaneletPath route({makeStraightLanelet(3)});
-  const RouteMotionProfile profile = buildRouteMotionProfile(route, 0.0, 3.0, 2.5, 1.0, 2.0, false);
+  const RouteMotionProfile profile = buildRouteMotionProfile(RouteGeometry(route, 0.0), 3.0, 2.5, 1.0, 2.0, false);
 
   ASSERT_TRUE(profile.feasible);
   const RouteMotionSample sample = sampleRouteMotionAtTime(profile.samples, 2.0);
@@ -90,7 +92,7 @@ TEST(RightOfWay, ProjectsReferenceLineBeyondRegulatingLanelet) {
   ASSERT_TRUE(from_approach.has_value());
   EXPECT_EQ(from_approach->lanelet_index, 1U);
   EXPECT_NEAR(from_approach->distance, 25.0, 1e-6);
-  const RouteMotionProfile nominal = buildRouteMotionProfile(full_route, 0.0, 4.0, 2.5, 1.0, 2.0, false);
+  const RouteMotionProfile nominal = buildRouteMotionProfile(RouteGeometry(full_route, 0.0), 4.0, 2.5, 1.0, 2.0, false);
   const double stop_distance = from_approach->distance - 2.5;
   const double successor_end = routeDistanceAtLaneletStart(full_route, 0.0, from_approach->lanelet_index) +
                                static_cast<double>(lanelet::geometry::length(successor.centerline2d()));
@@ -217,10 +219,10 @@ TEST(YieldInteraction, InterpolatesEgoAcrossShortPriorityLaneletAndKeepsConflict
 
 TEST(FollowingInteraction, MatchesOnlyTheSameDirectedLanelet) {
   const lanelet::routing::LaneletPath route({makeStraightLanelet(60)});
-  EXPECT_NEAR(*projectLeaderOnRoute(route, 0.0, lanelet::BasicPoint2d(8.0, 0.0), 0.0, 60), 8.0, 1e-6);
-  EXPECT_FALSE(projectLeaderOnRoute(route, 0.0, lanelet::BasicPoint2d(8.0, 4.0), 0.0, std::nullopt));
-  EXPECT_FALSE(projectLeaderOnRoute(route, 0.0, lanelet::BasicPoint2d(8.0, 0.0), M_PI, std::nullopt));
-  EXPECT_FALSE(projectLeaderOnRoute(route, 0.0, lanelet::BasicPoint2d(8.0, 0.0), 0.0, 61));
+  EXPECT_NEAR(*projectLeaderOnRoute(RouteGeometry(route, 0.0), lanelet::BasicPoint2d(8.0, 0.0), 0.0, 60), 8.0, 1e-6);
+  EXPECT_FALSE(projectLeaderOnRoute(RouteGeometry(route, 0.0), lanelet::BasicPoint2d(8.0, 4.0), 0.0, std::nullopt));
+  EXPECT_FALSE(projectLeaderOnRoute(RouteGeometry(route, 0.0), lanelet::BasicPoint2d(8.0, 0.0), M_PI, std::nullopt));
+  EXPECT_FALSE(projectLeaderOnRoute(RouteGeometry(route, 0.0), lanelet::BasicPoint2d(8.0, 0.0), 0.0, 61));
 }
 
 TEST(FollowingInteraction, BrakesContinuouslyBeforeAStationaryLeader) {
