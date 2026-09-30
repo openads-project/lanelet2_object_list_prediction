@@ -642,6 +642,16 @@ double profileSpeedAtDistance(const std::vector<RouteMotionSample>& profile, dou
   return before.speed + fraction * (upper->speed - before.speed);
 }
 
+/** Whether a leader's rear lies ahead of the follower's front, along the follower's heading. Offsets are relative
+ * to the reference points along each object's heading. */
+bool leaderAheadOfFollower(const lanelet::BasicPoint2d& follower_position,
+                           const lanelet::BasicPoint2d& follower_direction,
+                           double follower_front,
+                           const lanelet::BasicPoint2d& leader_position,
+                           double leader_rear) {
+  return (leader_position - follower_position).dot(follower_direction) + leader_rear >= follower_front;
+}
+
 struct FollowingStepResult {
   RouteMotionSample sample;
   bool feasible{true};
@@ -1698,7 +1708,8 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
     for (std::size_t hypothesis_index = 0; hypothesis_index < object.hypotheses.size(); ++hypothesis_index) {
       const PredictionObject::Hypothesis& follower = object.hypotheses[hypothesis_index];
       if (follower.reversing || follower.motion_profile.empty() || follower.route.empty()) continue;
-      // Traffic behind the follower cannot lead it
+      // A leader's rear must be ahead of the follower's front at the start. Traffic behind the follower cannot
+      // lead it, and objects beside or overlapping it (side by side, duplicate tracks) cannot be followed.
       std::optional<lanelet::BasicPoint2d> follower_position;
       lanelet::BasicPoint2d follower_direction(0.0, 0.0);
       try {
@@ -1708,15 +1719,17 @@ void Lanelet2ObjectListPrediction::applyFollowingInteractions(
         follower_direction = lanelet::BasicPoint2d(std::cos(yaw), std::sin(yaw));
       } catch (const std::exception&) {
       }
-      const auto behind_follower = [&](const lanelet::BasicPoint2d& position) {
-        return follower_position.has_value() && (position - *follower_position).dot(follower_direction) < 0.0;
+      const auto not_ahead_of_follower = [&](const lanelet::BasicPoint2d& position, double rear_offset) {
+        return follower_position.has_value() &&
+               !leaderAheadOfFollower(*follower_position, follower_direction, follower_front, position, rear_offset);
       };
-      const bool ego_behind = !ego_poses.empty() && behind_follower(ego_poses.front().position);
+      const bool ego_behind = !ego_poses.empty() && not_ahead_of_follower(ego_poses.front().position, ego_rear);
       std::vector<bool> leader_behind(prediction_objects.size(), false);
       for (std::size_t leader_index = 0; leader_index < prediction_objects.size(); ++leader_index) {
         try {
           const auto position = perception_msgs::object_access::getPosition(prediction_objects[leader_index].object);
-          leader_behind[leader_index] = behind_follower(lanelet::BasicPoint2d(position.x, position.y));
+          leader_behind[leader_index] =
+              not_ahead_of_follower(lanelet::BasicPoint2d(position.x, position.y), object_offsets[leader_index].second);
         } catch (const std::exception&) {
         }
       }

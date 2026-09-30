@@ -288,6 +288,15 @@ TEST(FollowingInteraction, MatchesOnlyTheSameDirectedLanelet) {
   EXPECT_FALSE(projectLeaderOnRoute(route, 0.0, lanelet::BasicPoint2d(8.0, 0.0), 0.0, 61));
 }
 
+TEST(FollowingInteraction, FollowsOnlyLeadersAheadOfTheFrontBumper) {
+  const lanelet::BasicPoint2d follower(0.0, 0.0);
+  const lanelet::BasicPoint2d heading(1.0, 0.0);
+  EXPECT_TRUE(leaderAheadOfFollower(follower, heading, 2.25, lanelet::BasicPoint2d(5.0, 0.0), -2.25));
+  EXPECT_FALSE(leaderAheadOfFollower(follower, heading, 2.25, lanelet::BasicPoint2d(3.0, 0.0), -2.25));
+  EXPECT_FALSE(leaderAheadOfFollower(follower, heading, 2.25, lanelet::BasicPoint2d(0.5, 2.0), -2.25));
+  EXPECT_FALSE(leaderAheadOfFollower(follower, heading, 2.25, lanelet::BasicPoint2d(-8.0, 0.0), -2.25));
+}
+
 TEST(FollowingInteraction, BrakesContinuouslyBeforeAStationaryLeader) {
   RouteMotionSample follower{0.0, 4.0, 0.0};
   constexpr double leader_clearance = 12.0;
