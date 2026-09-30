@@ -124,6 +124,41 @@ TEST(RouteCurvature, PreservesShortLeftAndRightTurns) {
   }
 }
 
+TEST(RouteSampling, EnforcedLaneFollowingCentersDetectionAndRouteGeometry) {
+  lanelet::Lanelet lane = makeLaneletWithCenterline(42, {{0.0, 0.0}, {10.0, 0.0}, {10.0, 10.0}});
+  perception_msgs::msg::ObjectState state;
+  perception_msgs::object_access::initializeState(state, perception_msgs::EGO::MODEL_ID);
+  geometry_msgs::msg::Point observed;
+  observed.x = 3.0;
+  observed.y = 0.7;
+  observed.z = 1.5;
+  perception_msgs::object_access::setPosition(state, observed);
+  geometry_msgs::msg::Vector3 observed_velocity;
+  observed_velocity.x = 4.0;
+  observed_velocity.y = 1.0;
+  perception_msgs::object_access::setVelocityXYZYaw(state, observed_velocity, 0.2);
+
+  centerStateOnLanelet(state, lane, 3.0, 4.0, false);
+  const auto position = perception_msgs::object_access::getPosition(state);
+  const auto velocity = perception_msgs::object_access::getVelocityXYZ(state);
+  EXPECT_NEAR(position.x, 3.0, 1e-6);
+  EXPECT_NEAR(position.y, 0.0, 1e-6);
+  EXPECT_NEAR(position.z, 1.5, 1e-6);
+  EXPECT_NEAR(perception_msgs::object_access::getYaw(state), 0.0, 1e-6);
+  EXPECT_NEAR(velocity.x, 4.0, 1e-6);
+  EXPECT_NEAR(velocity.y, 0.0, 1e-6);
+
+  const lanelet::routing::LaneletPath path({lane});
+  const SmoothedRoute route(path, 3.0);
+  for (double distance : {0.0, 2.0, 8.0, 12.0}) {
+    const auto expected = pointOnRoute(path, 3.0, distance);
+    const auto actual = route.centerlinePoint(distance);
+    EXPECT_NEAR(actual.x(), expected.x(), 1e-6);
+    EXPECT_NEAR(actual.y(), expected.y(), 1e-6);
+  }
+  EXPECT_NEAR(route.centerlineYaw(12.0), M_PI_2, 1e-6);
+}
+
 TEST(RouteSampling, FollowsTurnForObjectAlreadyInIt) {
   // A car halfway through a right turn, moving exactly along the lane.
   constexpr double radius = 8.0;

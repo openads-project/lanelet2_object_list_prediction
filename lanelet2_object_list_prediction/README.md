@@ -8,19 +8,21 @@ Predicts future states of multiple objects based on a Lanelet2 Map
 
 Subscribes to a list of objects in an arbitrary sensor frame, transforms them into the Lanelet2 map frame, and publishes an enriched object list with trajectory predictions attached to each object.
 
-The node matches objects to nearby lanelets permitted by their participant rules, queries the corresponding routing graph for reachable paths within the prediction horizon, and samples predicted states along each path. Bicycles and micromobility devices use bicycle rules and prefer dedicated bicycle lanes. Pedestrians and sidewalk users (VRU, such as wheelchairs and strollers) use pedestrian rules and prefer walkways, shared walkways, and crosswalks. VRU predictions exclude stairs. Motorcycles consider both vehicle lanes and dedicated bicycle lanes; feasible hypotheses closer to the observed position's lane centerline receive more probability. Objects without a suitable lanelet match use the configured Cartesian fallback.
+The node matches objects to nearby lanelets permitted by their participant rules, queries the corresponding routing graph for reachable paths within the prediction horizon, and samples predicted states along each path. Bicycles and micromobility devices use bicycle rules and prefer dedicated bicycle lanes. Pedestrians and sidewalk users (VRU, such as wheelchairs and strollers) use pedestrian rules and prefer walkways, shared walkways, and crosswalks. VRU predictions exclude stairs. Motorcycles consider both vehicle lanes and dedicated bicycle lanes; feasible hypotheses closer to the observed position's lane centerline receive more probability. Objects without a suitable lanelet match use the configured Cartesian fallback. With `processing.map_following.enforce_centerline` enabled, every matched prediction is placed on the mapped centerline with its tangent orientation. `processing.map_following.reset_detection_to_centerline` additionally snaps the reported detection to the best matched lane and aligns its heading and velocity. When the detection remains at its observed pose, the first jump to the centerline is exempt from the initial acceleration check. Later kinematic, yielding, and following calculations still use the lane route. Unmatched objects retain the configured Cartesian fallback. If a matched object has no feasible route, its predictions stay at the best matched centerline position.
 
 Map-based predictions project measured planar velocity onto the matched lanelet. Moving vehicles follow that direction,
-including backward motion within their current lanelet. The path starts with the observed lateral velocity and smoothly
-converges to the centerline over a distance chosen from the lateral acceleration limit. Body heading remains separate from travel
-direction. Nearly sideways motion uses the Cartesian constant-velocity fallback. Reverse predictions stop at the current
-lanelet boundary because the routing graph describes forward legal travel. A route is marked infeasible when
-its first predicted displacement would require more acceleration than the configured longitudinal or lateral limits.
-Each infeasible route receives `output.infeasible_hypothesis_probability` when feasible alternatives exist; with `0.0`,
-infeasible routes are discarded entirely, and if none remain, `processing.map_matching.fallback_mode` is used.
-When `processing.roundabout.enable` is true, routes beginning on or within 5 m of a lanelet tagged
-`intersection_type=roundabout` allow up to `processing.roundabout.initial_alignment_tolerance` of first-step position error.
-The route curvature and braking limits still apply.
+including backward motion within their current lanelet. With centerline enforcement disabled, the path starts with the
+observed lateral velocity and smoothly converges to the centerline over a distance chosen from the lateral acceleration
+limit. Body heading remains separate from travel direction. Nearly sideways motion uses the Cartesian constant-velocity
+fallback. Reverse predictions stop at the current lanelet boundary because the routing graph describes forward legal
+travel. The initial acceleration check rejects unreachable first displacements when centerline enforcement is disabled
+or the detection is reset to the centerline. It is skipped for the intentional first jump when centerline enforcement is
+on and the detection is retained. Route curvature and braking limits still apply. Each infeasible route receives
+`output.infeasible_hypothesis_probability` when feasible alternatives exist; with `0.0`, infeasible routes are discarded.
+If no feasible route remains, unmatched objects use `processing.map_matching.fallback_mode`, while matched objects in
+centerline mode get a stationary prediction at the best matched centerline position. When `processing.roundabout.enable`
+is true, routes beginning on or within 5 m of a lanelet tagged `intersection_type=roundabout` allow up to
+`processing.roundabout.initial_alignment_tolerance` of first-step position error when that check applies.
 
 Right-of-way interactions are evaluated once from the nominal hypotheses of the complete scene. Every route hypothesis can
 cause another object to yield. Yielding predictions brake before the mapped yield line, wait until ego or another predicted
@@ -73,6 +75,8 @@ flowchart LR
 | `processing.map_matching.max_distance` | `float` | `0.5` | max distance from a lanelet to consider it a match [m] |
 | `processing.map_matching.bicycle_max_distance` | `float` | `1.0` | max distance from a lanelet to consider it a match for bicycles, riding at lane edges [m] |
 | `processing.map_matching.max_delta_yaw_deg` | `float` | `90.0` | max yaw difference from a lanelet direction to consider it a match [deg] |
+| `processing.map_following.enforce_centerline` | `bool` | `true` | place matched prediction samples on the lane centerline |
+| `processing.map_following.reset_detection_to_centerline` | `bool` | `false` | also snap matched detections to the lane centerline |
 | `processing.map_matching.fallback_mode` | `string` | `"kinematic"` | fallback mode for objects not matched to map [kinematic|static] |
 | `processing.kinematic_limitations.enable` | `bool` | `true` | enable kinematic limitations |
 | `processing.kinematic_limitations.max_lateral_acceleration` | `float` | `2.5` | max lateral acceleration for predictions [m/s^2] |

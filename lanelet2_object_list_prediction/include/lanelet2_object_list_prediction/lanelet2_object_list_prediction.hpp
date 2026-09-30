@@ -64,6 +64,10 @@ class SmoothedRoute {
   double curvature(double travel_distance) const;
   /** Filtered centerline point at a travel distance, clamped to the route. */
   lanelet::BasicPoint2d point(double travel_distance) const;
+  /** Point on the mapped centerline, without heading smoothing. */
+  lanelet::BasicPoint2d centerlinePoint(double travel_distance) const;
+  /** Tangent of the mapped centerline at a travel distance. */
+  double centerlineYaw(double travel_distance) const;
   /** Point whose initial lateral offset converges onto the filtered centerline. */
   lanelet::BasicPoint2d convergingPoint(double travel_distance,
                                         double initial_lateral_offset,
@@ -382,6 +386,12 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
 
   /** Fallback mode for objects not matched to map [kinematic|static]. */
   std::string processing_map_matching_fallback_mode_ = "kinematic";
+
+  /** Place predictions for matched objects on the mapped centerline. */
+  bool processing_map_following_enforce_centerline_ = true;
+
+  /** Also move the reported detection to its matched centerline. */
+  bool processing_map_following_reset_detection_to_centerline_ = false;
 
   /** Enable kinematic limitations. */
   bool processing_kinematic_limitations_enable_ = true;
