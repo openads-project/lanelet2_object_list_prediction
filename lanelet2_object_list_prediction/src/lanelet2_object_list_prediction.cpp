@@ -1134,12 +1134,13 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
         matched_lanelet = matched_lanelet.invert();
         start_arc_length = lanelet_length - start_arc_length;
       }
+      double lateral_speed = reversing ? -lane_velocity.lateral : lane_velocity.lateral;
+      if (standing) lateral_speed = 0.0;
       const double centerline_distance =
           std::abs(lanelet::geometry::toArcCoordinates(matched_lanelet.centerline2d(), position_2d).distance);
-      prediction_object.lanelet_matches.push_back(
-          LaneletMatch{matched_lanelet, participant, candidate_lanelet.first, centerline_distance, start_arc_length,
-                       orientation_difference, reversing, standing ? 0.0 : std::abs(lane_velocity.longitudinal),
-                       standing ? 0.0 : (reversing ? -lane_velocity.lateral : lane_velocity.lateral), wrong_way});
+      prediction_object.lanelet_matches.push_back(LaneletMatch{
+          matched_lanelet, participant, candidate_lanelet.first, centerline_distance, start_arc_length, orientation_difference,
+          reversing, standing ? 0.0 : std::abs(lane_velocity.longitudinal), lateral_speed, wrong_way});
     }
 
     // Wrong-way riding is only assumed when no lanelet is ridden legally.
