@@ -6,4 +6,4 @@ repositories:
   perception_interfaces:
     type: git
     url: https://github.com/ika-rwth-aachen/perception_interfaces.git
-    version: 51c66ca4a877ba66009b2f50d9f9dac69c4904a0
+    version: eeffd0e1032676431616260d1d0b4d05d57104d0
