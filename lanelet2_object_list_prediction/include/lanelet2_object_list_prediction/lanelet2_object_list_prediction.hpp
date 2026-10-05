@@ -6,14 +6,17 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <lanelet2_routing/Forward.h>
+#include <lanelet2_routing/LaneletPath.h>
 #include <lanelet2_routing/RoutingGraph.h>
 #include <lanelet2_traffic_rules/TrafficRules.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <lanelet2_map_interface/lanelet2_map_interface.hpp>
+#include <perception_msgs/msg/ego_data.hpp>
 #include <perception_msgs/msg/object_list.hpp>
 #include <rclcpp/rclcpp.hpp>
 
@@ -25,6 +28,66 @@ template <typename T, typename A>
 struct is_vector<std::vector<T, A>> : std::true_type {};
 template <typename C>
 inline constexpr bool is_vector_v = is_vector<C>::value;
+
+/** One sample of a route-relative longitudinal motion profile. */
+struct RouteMotionSample {
+  double distance{0.0};
+  double speed{0.0};
+  double time{0.0};
+};
+
+/** Motion profile and its combined kinematic feasibility. */
+struct RouteMotionProfile {
+  std::vector<RouteMotionSample> samples;
+  bool feasible{true};
+};
+
+/**
+ * Heading-filtered geometry of a route, starting at the object. Travel distances
+ * are relative to the object; heading samples may reach behind it on the first
+ * lanelet. Headings are cached per distance and the centerline is integrated
+ * once per route and extended on demand, because profiles and predicted states
+ * query the same distances many times.
+ */
+class SmoothedRoute {
+ public:
+  /** Route starting at the object's arc length on the first lanelet. */
+  SmoothedRoute(lanelet::routing::LaneletPath route, double start_arc_length);
+
+  /** Whether the route contains no lanelets. */
+  bool empty() const { return route_.empty(); }
+  /** Remaining route length ahead of the object. */
+  double length() const { return length_; }
+  /** Median-filtered route heading at a travel distance. */
+  double yaw(double travel_distance) const;
+  /** Filtered heading change per distance across the curvature baseline. */
+  double curvature(double travel_distance) const;
+  /** Filtered centerline point at a travel distance, clamped to the route. */
+  lanelet::BasicPoint2d point(double travel_distance) const;
+  /** Point on the mapped centerline, without heading smoothing. */
+  lanelet::BasicPoint2d centerlinePoint(double travel_distance) const;
+  /** Tangent of the mapped centerline at a travel distance. */
+  double centerlineYaw(double travel_distance) const;
+  /** Point whose initial lateral offset converges onto the filtered centerline. */
+  lanelet::BasicPoint2d convergingPoint(double travel_distance,
+                                        double initial_lateral_offset,
+                                        double convergence_distance,
+                                        double initial_slope = 0.0) const;
+
+ private:
+  /** Unfiltered centerline heading at a travel distance. */
+  double rawYaw(double travel_distance) const;
+
+  lanelet::routing::LaneletPath route_;
+  double start_arc_length_{0.0};
+  double length_{0.0};
+  mutable std::unordered_map<double, double> raw_yaws_;
+  mutable std::unordered_map<double, double> yaws_;
+  // Filtered centerline at multiples of the profile resolution, extended lazily
+  mutable std::vector<lanelet::BasicPoint2d> grid_points_;
+};
+
+enum class PredictionParticipant { Vehicle, Bicycle, Pedestrian };
 
 /**
  * @brief Lanelet2ObjectListPrediction class
@@ -42,9 +105,18 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    */
   struct LaneletMatch {
     lanelet::ConstLanelet lanelet;  ///< Matched lanelet in the direction used for routing
-    double distance;                ///< Lateral distance from object position to lanelet geometry in meters
-    double start_arc_length;        ///< Arc length of the projected object position along the matched centerline
-    double orientation_difference;  ///< Absolute yaw difference between object heading and lanelet direction in radians
+    PredictionParticipant participant{PredictionParticipant::Vehicle};
+    double distance;                  ///< Lateral distance from object position to lanelet
+                                      ///< geometry in meters
+    double centerline_distance{0.0};  ///< Distance used to rank motorcycle lane matches
+    double start_arc_length;          ///< Arc length of the projected object position
+                                      ///< along the matched centerline
+    double orientation_difference;    ///< Absolute yaw difference between object
+                                      ///< heading and lanelet direction in radians
+    bool reversing{false};            ///< Velocity points backward along the legal lanelet
+    double longitudinal_speed{0.0};   ///< Speed along the direction of travel
+    double lateral_speed{0.0};        ///< Signed velocity across the direction of travel
+    bool wrong_way{false};            ///< Bicycle riding against a one-way bicycle lane
   };
 
   /**
@@ -52,7 +124,28 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    */
   struct PredictionObject {
     perception_msgs::msg::Object object;        ///< Object in map frame, later enriched with state predictions
-    std::vector<LaneletMatch> lanelet_matches;  ///< Lanelet candidates accepted for map-based prediction
+    std::vector<LaneletMatch> lanelet_matches;  ///< Lanelet candidates accepted
+                                                ///< for map-based prediction
+
+    struct Hypothesis {
+      lanelet::routing::LaneletPath route;
+      PredictionParticipant participant{PredictionParticipant::Vehicle};
+      double match_weight{1.0};
+      double start_arc_length{0.0};
+      lanelet::routing::LaneletPath geometry_route;
+      double geometry_start_arc_length{0.0};
+      double initial_speed{0.0};
+      double initial_lateral_speed{0.0};
+      bool reversing{false};
+      bool wrong_way{false};
+      bool stop_at_route_end{false};
+      bool feasible{true};
+      std::vector<RouteMotionSample> motion_profile;
+      perception_msgs::msg::ObjectStatePrediction prediction;
+    };
+
+    std::vector<Hypothesis> hypotheses;  ///< Map-based hypotheses retained for
+                                         ///< scene-level interaction processing
   };
 
   /**
@@ -61,7 +154,8 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @param name name
    * @param param parameter variable to load into
    * @param description description
-   * @param add_to_auto_reconfigurable_params enable reconfiguration of parameter
+   * @param add_to_auto_reconfigurable_params enable reconfiguration of
+   * parameter
    * @param is_required whether failure to load parameter will stop node
    * @param read_only set parameter to read-only
    * @param from_value parameter range minimum
@@ -109,11 +203,16 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    */
   void objectListCallback(const perception_msgs::msg::ObjectList::ConstSharedPtr& msg);
 
+  /** Stores the latest ego state and planned trajectory for interaction
+   * prediction. */
+  void egoDataCallback(const perception_msgs::msg::EgoData::ConstSharedPtr& msg);
+
   /**
    * @brief Match all objects in an object list to lanelets in the current map
    *
    * @param object_list object list in map frame
-   * @return internal prediction objects containing the original objects and their map matches
+   * @return internal prediction objects containing the original objects and
+   * their map matches
    */
   std::vector<PredictionObject> matchObjectListToMap(const perception_msgs::msg::ObjectList& object_list) const;
 
@@ -130,7 +229,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @return map-based predictions or the configured fallback prediction
    */
   std::vector<perception_msgs::msg::ObjectStatePrediction> createPredictionsForMatchedObject(
-      const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+      PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
 
   /**
    * @brief Creates route alternatives for an object matched to lanelets
@@ -139,8 +238,22 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @param base_time time stamp of the input object list
    * @return one prediction per possible lanelet route
    */
-  std::vector<perception_msgs::msg::ObjectStatePrediction> createMapBasedPredictions(
-      const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+  void createMapBasedPredictions(PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+
+  /** Applies right-of-way constraints using nominal hypotheses from the
+   * complete scene. */
+  void applyYieldInteractions(std::vector<PredictionObject>& prediction_objects,
+                              const builtin_interfaces::msg::Time& base_time,
+                              const std::optional<perception_msgs::msg::EgoData>& ego_data) const;
+
+  /** Applies a single car-following pass using the yielded scene as input. */
+  void applyFollowingInteractions(std::vector<PredictionObject>& prediction_objects,
+                                  const builtin_interfaces::msg::Time& base_time,
+                                  const std::optional<perception_msgs::msg::EgoData>& ego_data) const;
+
+  /** Rebuilds sampled messages from retained motion profiles and normalizes
+   * their probabilities. */
+  void finalizeMapBasedPredictions(PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
 
   /**
    * @brief Creates a stationary fallback prediction
@@ -166,17 +279,24 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Samples one predicted state along a lanelet route
    *
    * @param base_state current object state used as template
-   * @param route lanelet route to sample
-   * @param start_arc_length current object position along the first route lanelet
-   * @param travel_distance distance to travel along the route from the current position
+   * @param route smoothed lanelet route starting at the object
+   * @param travel_distance distance to travel along the route from the current
+   * position
+   * @param speed longitudinal speed at the sampled position
+   * @param initial_speed observed speed along the route
+   * @param initial_lateral_speed observed speed across the route
+   * @param reversing whether the vehicle is moving backward in its lane
    * @param base_time time stamp of the input object list
    * @param sample_index zero-based prediction sample index
    * @return predicted object state at the requested sample
    */
   perception_msgs::msg::ObjectState sampleStateOnLaneletRoute(const perception_msgs::msg::ObjectState& base_state,
-                                                              const lanelet::routing::LaneletPath& route,
-                                                              double start_arc_length,
+                                                              const SmoothedRoute& route,
                                                               double travel_distance,
+                                                              double speed,
+                                                              double initial_speed,
+                                                              double initial_lateral_speed,
+                                                              bool reversing,
                                                               const builtin_interfaces::msg::Time& base_time,
                                                               std::size_t sample_index) const;
 
@@ -223,6 +343,12 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    */
   rclcpp::Subscription<perception_msgs::msg::ObjectList>::SharedPtr subscriber_;
 
+  /** Subscriber for ego state and planned trajectory. */
+  rclcpp::Subscription<perception_msgs::msg::EgoData>::SharedPtr ego_data_subscriber_;
+
+  /** Latest ego message, transformed on demand when an object list arrives. */
+  perception_msgs::msg::EgoData::ConstSharedPtr latest_ego_data_;
+
   /**
    * @brief Publisher
    */
@@ -243,45 +369,98 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    */
   std::unique_ptr<Lanelet2MapInterface> ll2_interface_;
 
-  /**
-   * @brief Name of lanelet2_map_server node (parameter)
-   */
-  std::string ll2_map_server_name_ = "lanelet2_map_server";
+  /** Timeout for considering ego vehicle data [s]. */
+  double input_ego_data_timeout_ = 1.0;
 
-  /**
-   * @brief Maximum object-to-lanelet matching distance in meters (parameter)
-   */
-  double lanelet_match_max_distance_m_ = 0.5;
+  /** Name of lanelet2_map_server node. */
+  std::string processing_map_matching_ll2_map_server_name_ = "lanelet2_map_server";
 
-  /**
-   * @brief Maximum yaw difference for accepting a lanelet match in radians (parameter)
-   */
-  double lanelet_match_max_yaw_diff_rad_ = 1.57079632679;
+  /** Max distance from a lanelet to consider it a match [m]. */
+  double processing_map_matching_max_distance_ = 0.5;
 
-  /**
-   * @brief Prediction horizon in seconds (parameter)
-   */
-  double prediction_horizon_s_ = 5.0;
+  /** Max distance from a lanelet to consider it a match for bicycles, riding at lane edges [m]. */
+  double processing_map_matching_bicycle_max_distance_ = 1.0;
 
-  /**
-   * @brief Sampling interval of predicted states in seconds (parameter)
-   */
-  double prediction_sample_interval_s_ = 0.5;
+  /** Max yaw difference from a lanelet direction to consider it a match [deg]. */
+  double processing_map_matching_max_delta_yaw_deg_ = 90.0;
 
-  /**
-   * @brief Prediction mode for unmatched objects: "static" or "kinematic" (parameter)
-   */
-  std::string unmatched_object_prediction_mode_ = "kinematic";
+  /** Prefer a valid bicycle lane over vehicle lanes for motorcycles. */
+  bool processing_map_matching_prefer_bicycle_lanes_for_motorcycles_ = true;
+
+  /** Fallback mode for objects not matched to map [kinematic|static]. */
+  std::string processing_map_matching_fallback_mode_ = "kinematic";
+
+  /** Place predictions for matched objects on the mapped centerline. */
+  bool processing_map_following_enforce_centerline_ = true;
+
+  /** Also move the reported detection to its matched centerline. */
+  bool processing_map_following_reset_detection_to_centerline_ = false;
+
+  /** Enable kinematic limitations. */
+  bool processing_kinematic_limitations_enable_ = true;
+
+  /** Max lateral acceleration for predictions [m/s^2]. */
+  double processing_kinematic_limitations_max_lateral_acceleration_ = 2.5;
+
+  /** Max longitudinal deceleration for predictions [m/s^2]. */
+  double processing_kinematic_limitations_max_longitudinal_deceleration_ = 2.0;
+
+  /** Max longitudinal acceleration for predictions [m/s^2]. */
+  double processing_kinematic_limitations_max_longitudinal_acceleration_ = 1.0;
+
+  /** Enable yielding. */
+  bool processing_yielding_enable_ = true;
+
+  /** Clearance between front and yield line [m]. */
+  double processing_yielding_clearance_distance_ = 0.5;
+
+  /** Time gap required before and after priority traffic [s]. */
+  double processing_yielding_clearance_time_ = 1.0;
+
+  /** Time up to which ego's right of way is considered, extrapolating its planned trajectory [s]. */
+  double processing_yielding_ego_lookahead_time_ = 8.0;
+
+  /** Enable following, avoiding collisions with leading objects. */
+  bool processing_following_enable_ = true;
+
+  /** Min distance to the leading object [m]. */
+  double processing_following_headway_distance_ = 2.0;
+
+  /** Min time headway to the leading object [s]. */
+  double processing_following_headway_time_ = 1.0;
+
+  /** Enable special roundabout handling. */
+  bool processing_roundabout_enable_ = true;
+
+  /** Tolerance for initial alignment with roundabout centerline, not respecting kinematic limitations [m]. */
+  double processing_roundabout_initial_alignment_tolerance_ = 1.0;
+
+  /** Prediction time horizon [s]. */
+  double output_prediction_horizon_ = 5.0;
+
+  /** Time interval between prediction samples [s]. */
+  double output_sample_interval_ = 0.5;
+
+  /** Probability for infeasible hypotheses. */
+  double output_infeasible_hypothesis_probability_ = 0.0;
 
   /**
    * @brief Lanelet2 routing graph
    */
   lanelet::routing::RoutingGraphUPtr routing_graph_;
 
+  /** Routing graph for bicycles, including bicycle-only lanelets. */
+  lanelet::routing::RoutingGraphUPtr bicycle_routing_graph_;
+  lanelet::routing::RoutingGraphUPtr pedestrian_routing_graph_;
+
   /**
    * @brief Traffic rules used for lanelet matching and routing
    */
   lanelet::traffic_rules::TrafficRulesUPtr traffic_rules_;
+
+  /** Traffic rules used to match bicycles to bicycle-accessible lanelets. */
+  lanelet::traffic_rules::TrafficRulesUPtr bicycle_traffic_rules_;
+  lanelet::traffic_rules::TrafficRulesUPtr pedestrian_traffic_rules_;
 
   /**
    * @brief Map pointer used when the routing graph was built
