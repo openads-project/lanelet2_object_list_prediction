@@ -6,9 +6,11 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <lanelet2_routing/Forward.h>
+#include <lanelet2_routing/LaneletPath.h>
 #include <lanelet2_routing/RoutingGraph.h>
 #include <lanelet2_traffic_rules/TrafficRules.h>
 #include <tf2_ros/buffer.h>
@@ -40,6 +42,51 @@ struct RouteMotionProfile {
   bool feasible{true};
 };
 
+/**
+ * Heading-filtered geometry of a route, starting at the object. Travel distances
+ * are relative to the object; heading samples may reach behind it on the first
+ * lanelet. Headings are cached per distance and the centerline is integrated
+ * once per route and extended on demand, because profiles and predicted states
+ * query the same distances many times.
+ */
+class SmoothedRoute {
+ public:
+  /** Route starting at the object's arc length on the first lanelet. */
+  SmoothedRoute(lanelet::routing::LaneletPath route, double start_arc_length);
+
+  /** Whether the route contains no lanelets. */
+  bool empty() const { return route_.empty(); }
+  /** Remaining route length ahead of the object. */
+  double length() const { return length_; }
+  /** Median-filtered route heading at a travel distance. */
+  double yaw(double travel_distance) const;
+  /** Filtered heading change per distance across the curvature baseline. */
+  double curvature(double travel_distance) const;
+  /** Filtered centerline point at a travel distance, clamped to the route. */
+  lanelet::BasicPoint2d point(double travel_distance) const;
+  /** Point on the mapped centerline, without heading smoothing. */
+  lanelet::BasicPoint2d centerlinePoint(double travel_distance) const;
+  /** Tangent of the mapped centerline at a travel distance. */
+  double centerlineYaw(double travel_distance) const;
+  /** Point whose initial lateral offset converges onto the filtered centerline. */
+  lanelet::BasicPoint2d convergingPoint(double travel_distance,
+                                        double initial_lateral_offset,
+                                        double convergence_distance,
+                                        double initial_slope = 0.0) const;
+
+ private:
+  /** Unfiltered centerline heading at a travel distance. */
+  double rawYaw(double travel_distance) const;
+
+  lanelet::routing::LaneletPath route_;
+  double start_arc_length_{0.0};
+  double length_{0.0};
+  mutable std::unordered_map<double, double> raw_yaws_;
+  mutable std::unordered_map<double, double> yaws_;
+  // Filtered centerline at multiples of the profile resolution, extended lazily
+  mutable std::vector<lanelet::BasicPoint2d> grid_points_;
+};
+
 enum class PredictionParticipant { Vehicle, Bicycle, Pedestrian };
 
 /**
@@ -69,6 +116,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
     bool reversing{false};            ///< Velocity points backward along the legal lanelet
     double longitudinal_speed{0.0};   ///< Speed along the direction of travel
     double lateral_speed{0.0};        ///< Signed velocity across the direction of travel
+    bool wrong_way{false};            ///< Bicycle riding against a one-way bicycle lane
   };
 
   /**
@@ -84,9 +132,12 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
       PredictionParticipant participant{PredictionParticipant::Vehicle};
       double match_weight{1.0};
       double start_arc_length{0.0};
+      lanelet::routing::LaneletPath geometry_route;
+      double geometry_start_arc_length{0.0};
       double initial_speed{0.0};
       double initial_lateral_speed{0.0};
       bool reversing{false};
+      bool wrong_way{false};
       bool stop_at_route_end{false};
       bool feasible{true};
       std::vector<RouteMotionSample> motion_profile;
@@ -228,9 +279,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Samples one predicted state along a lanelet route
    *
    * @param base_state current object state used as template
-   * @param route lanelet route to sample
-   * @param start_arc_length current object position along the first route
-   * lanelet
+   * @param route smoothed lanelet route starting at the object
    * @param travel_distance distance to travel along the route from the current
    * position
    * @param speed longitudinal speed at the sampled position
@@ -242,8 +291,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @return predicted object state at the requested sample
    */
   perception_msgs::msg::ObjectState sampleStateOnLaneletRoute(const perception_msgs::msg::ObjectState& base_state,
-                                                              const lanelet::routing::LaneletPath& route,
-                                                              double start_arc_length,
+                                                              const SmoothedRoute& route,
                                                               double travel_distance,
                                                               double speed,
                                                               double initial_speed,
@@ -330,11 +378,23 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   /** Max distance from a lanelet to consider it a match [m]. */
   double processing_map_matching_max_distance_ = 0.5;
 
+  /** Max distance from a lanelet to consider it a match for bicycles, riding at lane edges [m]. */
+  double processing_map_matching_bicycle_max_distance_ = 1.0;
+
   /** Max yaw difference from a lanelet direction to consider it a match [deg]. */
   double processing_map_matching_max_delta_yaw_deg_ = 90.0;
 
+  /** Prefer a valid bicycle lane over vehicle lanes for motorcycles. */
+  bool processing_map_matching_prefer_bicycle_lanes_for_motorcycles_ = true;
+
   /** Fallback mode for objects not matched to map [kinematic|static]. */
   std::string processing_map_matching_fallback_mode_ = "kinematic";
+
+  /** Place predictions for matched objects on the mapped centerline. */
+  bool processing_map_following_enforce_centerline_ = true;
+
+  /** Also move the reported detection to its matched centerline. */
+  bool processing_map_following_reset_detection_to_centerline_ = false;
 
   /** Enable kinematic limitations. */
   bool processing_kinematic_limitations_enable_ = true;
@@ -354,8 +414,11 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   /** Clearance between front and yield line [m]. */
   double processing_yielding_clearance_distance_ = 0.5;
 
-  /** Time to wait after priority traffic has cleared [s]. */
+  /** Time gap required before and after priority traffic [s]. */
   double processing_yielding_clearance_time_ = 1.0;
+
+  /** Time up to which ego's right of way is considered, extrapolating its planned trajectory [s]. */
+  double processing_yielding_ego_lookahead_time_ = 8.0;
 
   /** Enable following, avoiding collisions with leading objects. */
   bool processing_following_enable_ = true;
