@@ -8,41 +8,16 @@ Predicts future states of multiple objects based on a Lanelet2 Map
 
 Subscribes to a list of objects in an arbitrary sensor frame, transforms them into the Lanelet2 map frame, and publishes an enriched object list with trajectory predictions attached to each object.
 
-The node matches objects to nearby lanelets permitted by their participant rules, queries the corresponding routing graph for reachable paths within the prediction horizon, and samples predicted states along each path. Bicycles and micromobility devices use bicycle rules and prefer dedicated bicycle lanes. Pedestrians and sidewalk users (VRU, such as wheelchairs and strollers) use pedestrian rules and prefer walkways, shared walkways, and crosswalks. VRU predictions exclude stairs. Motorcycles consider both vehicle lanes and dedicated bicycle lanes, but prefer a valid bicycle lane match when `processing.map_matching.prefer_bicycle_lanes_for_motorcycles` is true. Feasible motorcycle hypotheses closer to the observed position's lane centerline receive more probability. Objects without a suitable lanelet match use the configured Cartesian fallback. With `processing.map_following.enforce_centerline` enabled, every matched prediction is placed on the mapped centerline with its tangent orientation. `processing.map_following.reset_detection_to_centerline` additionally snaps the reported detection to the best matched lane and aligns its heading and velocity. When the detection remains at its observed pose, the first jump to the centerline is exempt from the initial acceleration check. Later kinematic, yielding, and following calculations still use the lane route. Unmatched objects retain the configured Cartesian fallback. If a matched object has no feasible route, its predictions stay at the best matched centerline position.
+For each incoming object list, the node:
 
-Map-based predictions project measured planar velocity onto the matched lanelet. Moving vehicles follow that direction,
-including backward motion within their current lanelet. With centerline enforcement disabled, the path starts with the
-observed lateral velocity and smoothly converges to the centerline over a distance chosen from the lateral acceleration
-limit. Body heading remains separate from travel direction. Nearly sideways motion uses the Cartesian constant-velocity
-fallback. Reverse predictions stop at the current lanelet boundary because the routing graph describes forward legal
-travel. The initial acceleration check rejects unreachable first displacements when centerline enforcement is disabled
-or the detection is reset to the centerline. It is skipped for the intentional first jump when centerline enforcement is
-on and the detection is retained. Route curvature and braking limits still apply. Each infeasible route receives
-`output.infeasible_hypothesis_probability` when feasible alternatives exist; with `0.0`, infeasible routes are discarded.
-If no feasible route remains, unmatched objects use `processing.map_matching.fallback_mode`, while matched objects in
-centerline mode get a stationary prediction at the best matched centerline position. When `processing.roundabout.enable`
-is true, routes beginning on or within 5 m of a lanelet tagged `intersection_type=roundabout` allow up to
-`processing.roundabout.initial_alignment_tolerance` of first-step position error when that check applies.
-
-Right-of-way interactions are evaluated once from the nominal hypotheses of the complete scene. Every route hypothesis can
-cause another object to yield. Yielding predictions brake before the mapped yield line, wait until ego or another predicted
-object has cleared the priority approach and its conflict with the turning route, plus the configured clearance time,
-and then accelerate within the configured kinematic limits. Ego trajectory segments are interpolated so short priority
-lanelets are detected even when no published sample falls inside them. Reference lines are projected onto the whole route,
-including successors of the lanelet carrying the rule. A branch inherits the yield line only when Lanelet2 reports a
-conflict between the lanelet at the yield line (or its immediate successor) and the priority lanelets or their
-successors; a later crossing on the route does not make this line apply to every branch. An object already on the first successor still observes its predecessor's right-of-way rule until it passes
-the reference line. Missing or stale ego
-data disables ego interaction only; object-to-object interaction remains active.
-
-After right-of-way constraints, a single following pass uses ego's planned trajectory and every feasible hypothesis of
-other matched objects as possible leaders. Unmatched objects use their configured Cartesian fallback. A follower brakes
-within the longitudinal deceleration limit to maintain a minimum bumper gap plus a speed-dependent headway, then
-accelerates toward its observed speed when the leader moves away or leaves its route. Only participants on the same
-directed lanelet are considered; crossing traffic remains handled by right-of-way rules. If the observed speed and gap
-make braking impossible, the continuous hypothesis is marked infeasible. Following is evaluated once from the yielded
-scene, so a slowdown caused by following does not propagate through a longer queue in the same callback. The
-last ego trajectory pose is held if the published plan ends before the prediction horizon.
+- Checks that the map is available, refreshes routing graphs when it changes, and transforms the list into the map frame. Lists are skipped if the map or required TF transform is unavailable.
+- Matches each object to nearby lanelets using its classification, position, heading, velocity, and participant-specific traffic rules. Bicycles and pedestrians prefer dedicated lanes and walkways; motorcycles optionally prefer bicycle lanes, and VRUs exclude stairs. Nearly sideways motion is rejected. Detections can optionally be snapped to the best matched centerline.
+- Creates route hypotheses from each match using the corresponding routing graph, the measured speed along the lane, and the prediction horizon, without lane changes. Reverse motion stays within the current lanelet. Motion profiles account for curves, route ends, and configured acceleration/braking limits, marking infeasible hypotheses. Initial-motion feasibility checks include configurable roundabout tolerance.
+- Validates the latest ego data and transforms it into the map frame. Without a usable ego plan, interactions between other objects still apply.
+- If enabled, applies right-of-way constraints using the whole scene's nominal route hypotheses and ego plan: objects brake before applicable yield lines, wait for priority traffic to clear plus a safety interval, then accelerate.
+- If enabled, applies one following pass using the yielded scene and ego plan: followers adjust speed to maintain a minimum bumper gap and speed-dependent headway behind leaders on the same directed lanelet. Impossible braking marks a hypothesis infeasible.
+- Samples timestamped states over the configured horizon and interval, updating position, heading, and velocity. Predictions follow centerlines or smoothly converge from the observed motion, depending on configuration. Infeasible hypotheses are discarded when their configured probability is zero; retained hypotheses receive normalized probabilities, with motorcycle matches weighted by centerline proximity. If no hypothesis remains, uses the configured stationary or constant-velocity fallback, or a stationary centerline prediction for matched objects when centerline enforcement is enabled.
+- Attaches the predictions to each object and publishes the enriched list in the map frame, retaining the input list's timestamp.
 
 ```mermaid
 flowchart LR
