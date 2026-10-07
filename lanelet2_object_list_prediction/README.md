@@ -8,7 +8,16 @@ Predicts future states of multiple objects based on a Lanelet2 Map
 
 Subscribes to a list of objects in an arbitrary sensor frame, transforms them into the Lanelet2 map frame, and publishes an enriched object list with trajectory predictions attached to each object.
 
-For vehicles and other road users, the node matches each object to the nearest lanelet in the map, queries the routing graph for all reachable paths within the prediction horizon, and samples predicted states at fixed time intervals along each path. Pedestrians are not matched to the road network and receive a constant-velocity prediction instead.
+The node matches each object to the nearest lanelets in the map, queries the routing graph for all reachable paths within the prediction horizon, and samples predicted states at fixed time intervals along each path. Objects without a lanelet match receive the prediction set by `unmatched_object_prediction_mode`.
+
+Each feature has its own parameter group and can be switched on and off with its `enable` parameter.
+
+**Participant-specific matching** (`participant_specific_matching`)
+
+- Pedestrians and other vulnerable road users are matched and routed with the LL2 pedestrian rules, i.e. along walkways, crosswalks and other lanelets open to pedestrians.
+- Bicycles and micromobility use the bicycle rules, as do motorcycles on bicycle lanes. If a bicycle lane matches, other matches are dropped.
+- `allow_opposite_direction`: a two-wheeler without any legal match may be matched against a one-way lanelet's direction. It is then predicted backwards along the lanelet's legal predecessors.
+- Disabled: pedestrians are not matched, and all other objects use the vehicle rules.
 
 ```mermaid
 flowchart LR
@@ -40,6 +49,8 @@ flowchart LR
 | `prediction_horizon_s` | `float` | `5.0` | Prediction horizon in seconds |
 | `prediction_sample_interval_s` | `float` | `0.5` | Sampling interval of predicted states in seconds |
 | `unmatched_object_prediction_mode` | `string` | `"kinematic"` | Prediction mode for objects that are not matched to the map |
+| `participant_specific_matching.enable` | `bool` | `true` | Match and route pedestrians and two-wheelers with their own traffic rules, preferring bicycle lanes for two-wheelers |
+| `participant_specific_matching.allow_opposite_direction` | `bool` | `true` | Predict two-wheelers without a legal lanelet match against a lanelet's direction |
 
 ## Launch Files
 

@@ -38,6 +38,14 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
 
  private:
   /**
+   * @brief Traffic rules and routing graph of one traffic participant type
+   */
+  struct ParticipantRouting {
+    lanelet::traffic_rules::TrafficRulesUPtr traffic_rules;
+    lanelet::routing::RoutingGraphUPtr routing_graph;
+  };
+
+  /**
    * @brief Lanelet match candidate for one perceived object
    */
   struct LaneletMatch {
@@ -45,6 +53,8 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
     double distance;                ///< Lateral distance from object position to lanelet geometry in meters
     double start_arc_length;        ///< Arc length of the projected object position along the matched centerline
     double orientation_difference;  ///< Absolute yaw difference between object heading and lanelet direction in radians
+    const lanelet::routing::RoutingGraph* routing_graph;  ///< Routing graph of the participant type matched to the lanelet
+    bool opposite_direction;  ///< Whether the lanelet is used against its legal direction, routing along its predecessors
   };
 
   /**
@@ -274,14 +284,19 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   std::string unmatched_object_prediction_mode_ = "kinematic";
 
   /**
-   * @brief Lanelet2 routing graph
+   * @brief Whether pedestrians and two-wheelers are matched and routed with their own traffic rules (parameter)
    */
-  lanelet::routing::RoutingGraphUPtr routing_graph_;
+  bool participant_specific_matching_enable_ = true;
 
   /**
-   * @brief Traffic rules used for lanelet matching and routing
+   * @brief Whether two-wheelers without a legal match may be predicted against a lanelet's direction (parameter)
    */
-  lanelet::traffic_rules::TrafficRulesUPtr traffic_rules_;
+  bool participant_specific_matching_allow_opposite_direction_ = true;
+
+  /**
+   * @brief Traffic rules and routing graphs used for lanelet matching and routing, per traffic participant type
+   */
+  ParticipantRouting vehicle_routing_, bicycle_routing_, pedestrian_routing_;
 
   /**
    * @brief Map pointer used when the routing graph was built

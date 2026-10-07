@@ -6,3 +6,6 @@
     prediction_horizon_s: 5.0
     prediction_sample_interval_s: 0.5
     unmatched_object_prediction_mode: kinematic
+    participant_specific_matching:
+      enable: true                    # match and route pedestrians and two-wheelers with their own traffic rules, preferring bicycle lanes for two-wheelers
+      allow_opposite_direction: true  # predict two-wheelers without a legal lanelet match against a lanelet's direction
