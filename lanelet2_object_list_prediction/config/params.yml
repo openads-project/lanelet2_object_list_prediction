@@ -9,3 +9,7 @@
     participant_specific_matching:
       enable: true                    # match and route pedestrians and two-wheelers with their own traffic rules, preferring bicycle lanes for two-wheelers
       allow_opposite_direction: true  # predict two-wheelers without a legal lanelet match against a lanelet's direction
+    motion_limits:
+      enable: true                             # reduce the predicted speed in curves to respect the acceleration limits
+      max_lateral_acceleration_mps2: 3.0       # maximum lateral acceleration of predicted objects in curves
+      max_longitudinal_deceleration_mps2: 2.0  # maximum longitudinal deceleration of predicted objects

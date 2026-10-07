@@ -19,6 +19,12 @@ Each feature has its own parameter group and can be switched on and off with its
 - `allow_opposite_direction`: a two-wheeler without any legal match may be matched against a one-way lanelet's direction. It is then predicted backwards along the lanelet's legal predecessors.
 - Disabled: pedestrians are not matched, and all other objects use the vehicle rules.
 
+**Motion limits** (`motion_limits`)
+
+- The predicted speed along each path is limited in curves, so that the lateral acceleration stays below `max_lateral_acceleration_mps2`. The curvature is taken from the path's centerline over 3 m chords.
+- The object brakes with at most `max_longitudinal_deceleration_mps2`, early enough to reach each curve at its limited speed. It does not speed up again after a curve.
+- Disabled: objects keep their current speed along each path.
+
 ```mermaid
 flowchart LR
     NODE("lanelet2_object_list_prediction")
@@ -51,6 +57,9 @@ flowchart LR
 | `unmatched_object_prediction_mode` | `string` | `"kinematic"` | Prediction mode for objects that are not matched to the map |
 | `participant_specific_matching.enable` | `bool` | `true` | Match and route pedestrians and two-wheelers with their own traffic rules, preferring bicycle lanes for two-wheelers |
 | `participant_specific_matching.allow_opposite_direction` | `bool` | `true` | Predict two-wheelers without a legal lanelet match against a lanelet's direction |
+| `motion_limits.enable` | `bool` | `true` | Reduce the predicted speed in curves to respect the lateral and longitudinal acceleration limits |
+| `motion_limits.max_lateral_acceleration_mps2` | `float` | `3.0` | Maximum lateral acceleration in m/s^2 of predicted objects in curves |
+| `motion_limits.max_longitudinal_deceleration_mps2` | `float` | `2.0` | Maximum longitudinal deceleration in m/s^2 of predicted objects |
 
 ## Launch Files
 
