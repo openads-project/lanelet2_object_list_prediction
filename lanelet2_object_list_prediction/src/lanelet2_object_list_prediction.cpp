@@ -5,6 +5,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <tuple>
 #include <utility>
 
 #include <lanelet2_core/Attribute.h>
@@ -53,14 +54,17 @@ constexpr double kCurvatureChordLengthM = 3.0;  // long enough to smooth centerl
 constexpr int kSimulationStepsPerSample = 10;
 
 // Travel distance and speed at each sample time along a route. Starting at `speed`, the object brakes with at most
-// `max_deceleration` early enough to pass curves with at most `max_lateral_acceleration`.
-std::vector<std::pair<double, double>> limitedMotionAlongRoute(const lanelet::routing::LaneletPath& route,
-                                                               double start_arc_length,
-                                                               double speed,
-                                                               double sample_interval,
-                                                               std::size_t sample_count,
-                                                               double max_lateral_acceleration,
-                                                               double max_deceleration) {
+// `max_deceleration` early enough to pass curves with at most `max_lateral_acceleration`, and accelerates with at most
+// `max_acceleration` back towards its initial speed after them. Also returns whether the initial speed allows braking
+// early enough for all curves.
+std::pair<bool, std::vector<std::pair<double, double>>> limitedMotionAlongRoute(const lanelet::routing::LaneletPath& route,
+                                                                                double start_arc_length,
+                                                                                double speed,
+                                                                                double sample_interval,
+                                                                                std::size_t sample_count,
+                                                                                double max_lateral_acceleration,
+                                                                                double max_acceleration,
+                                                                                double max_deceleration) {
   // Speed limit every meter ahead: the curve speed, lowered so that the limits further ahead can be reached by braking
   const lanelet::CompoundLineString2d centerline =
       lanelet::LaneletSequence(lanelet::ConstLanelets(route.begin(), route.end())).centerline2d();
@@ -75,25 +79,26 @@ std::vector<std::pair<double, double>> limitedMotionAlongRoute(const lanelet::ro
     const double distance = static_cast<double>(i) * kSpeedLimitResolutionM;
     const double curvature = lanelet::geometry::curvature2d(point(distance - kCurvatureChordLengthM), point(distance),
                                                             point(distance + kCurvatureChordLengthM));
-    if (std::isfinite(curvature) && curvature > 0.0)
-      speed_limits[i] = std::min(speed, std::sqrt(max_lateral_acceleration / curvature));
+    if (std::isfinite(curvature)) speed_limits[i] = std::min(speed, std::sqrt(max_lateral_acceleration / curvature));
     if (i + 1 < limit_count) {
       speed_limits[i] = std::min(speed_limits[i],
                                  std::sqrt(std::pow(speed_limits[i + 1], 2) + 2.0 * max_deceleration * kSpeedLimitResolutionM));
     }
   }
 
-  // Simulate in small time steps, braking whenever the object is faster than the next speed limit
+  const bool feasible = speed <= speed_limits.front();
+
+  // Simulate in small time steps, braking or accelerating towards the next speed limit
   const double dt = sample_interval / kSimulationStepsPerSample;
   double distance = 0.0;
   std::vector<std::pair<double, double>> motion;
   for (std::size_t step = 1; step <= sample_count * kSimulationStepsPerSample; ++step) {
     const auto next_limit = std::min(static_cast<std::size_t>(std::ceil(distance / kSpeedLimitResolutionM)), limit_count - 1);
-    speed = std::max(speed - max_deceleration * dt, std::min(speed, speed_limits[next_limit]));
+    speed = std::clamp(speed_limits[next_limit], speed - max_deceleration * dt, speed + max_acceleration * dt);
     distance += speed * dt;
     if (step % kSimulationStepsPerSample == 0) motion.emplace_back(distance, speed);
   }
-  return motion;
+  return {feasible, motion};
 }
 
 }  // namespace
@@ -114,6 +119,9 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
   this->declareAndLoadParameter("unmatched_object_prediction_mode", unmatched_object_prediction_mode_,
                                 "Prediction mode for objects that are not matched to the map", true, false, false, std::nullopt,
                                 std::nullopt, std::nullopt, "Allowed values: static, kinematic");
+  this->declareAndLoadParameter("infeasible_prediction_probability", infeasible_prediction_probability_,
+                                "Probability of each prediction that cannot be followed within the motion limits", true, false,
+                                false, 0.0, 1.0, 0.01);
   this->declareAndLoadParameter("participant_specific_matching.enable", participant_specific_matching_enable_,
                                 "Match and route pedestrians and two-wheelers with their own traffic rules, preferring "
                                 "bicycle lanes for two-wheelers");
@@ -127,8 +135,14 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
                                 "Maximum lateral acceleration in m/s^2 of predicted objects in curves", true, false, false, 0.1,
                                 20.0, 0.1);
   this->declareAndLoadParameter(
+      "motion_limits.max_longitudinal_acceleration_mps2", motion_limits_max_longitudinal_acceleration_mps2_,
+      "Maximum longitudinal acceleration in m/s^2 of predicted objects regaining their current speed after slowing down, "
+      "e.g. after a curve; predictions never exceed the current speed",
+      true, false, false, 0.0, 20.0, 0.1);
+  this->declareAndLoadParameter(
       "motion_limits.max_longitudinal_deceleration_mps2", motion_limits_max_longitudinal_deceleration_mps2_,
-      "Maximum longitudinal deceleration in m/s^2 of predicted objects", true, false, false, 0.1, 20.0, 0.1);
+      "Maximum longitudinal deceleration in m/s^2 of predicted objects slowing down, e.g. before a curve", true, false, false,
+      0.1, 20.0, 0.1);
   this->setup();
 }
 
@@ -418,11 +432,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
     } else {
       predictions.push_back(createConstantVelocityPrediction(prediction_object.object, base_time));
     }
-  }
-
-  const double probability = 1.0 / static_cast<double>(predictions.size());
-  for (perception_msgs::msg::ObjectStatePrediction& prediction : predictions) {
-    prediction.probability = probability;
+    predictions.back().probability = 1.0;
   }
   return predictions;
 }
@@ -467,11 +477,13 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
 
     for (const lanelet::routing::LaneletPath& lanelet_route : routes) {
       // Travel distance and speed at each sample
+      bool feasible = true;
       std::vector<std::pair<double, double>> motion;
       if (motion_limits_enable_ && max_travel_distance > std::numeric_limits<double>::epsilon()) {
-        motion = limitedMotionAlongRoute(lanelet_route, match.start_arc_length, speed, prediction_sample_interval_s_,
-                                         sample_count, motion_limits_max_lateral_acceleration_mps2_,
-                                         motion_limits_max_longitudinal_deceleration_mps2_);
+        std::tie(feasible, motion) = limitedMotionAlongRoute(
+            lanelet_route, match.start_arc_length, speed, prediction_sample_interval_s_, sample_count,
+            motion_limits_max_lateral_acceleration_mps2_, motion_limits_max_longitudinal_acceleration_mps2_,
+            motion_limits_max_longitudinal_deceleration_mps2_);
       } else {
         for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
           motion.emplace_back(speed * prediction_sample_interval_s_ * static_cast<double>(sample_index + 1), speed);
@@ -485,10 +497,22 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
                                                               match.start_arc_length, motion[sample_index].first,
                                                               motion[sample_index].second, base_time, sample_index));
       }
+      prediction.probability = feasible ? 1.0 : 0.0;  // marks feasibility until the probabilities are assigned below
       predictions.push_back(prediction);
     }
   }
 
+  // Infeasible predictions get the configured probability, feasible ones share the rest equally. Without any feasible
+  // prediction, the object gets the fallback prediction instead.
+  const auto count = static_cast<double>(predictions.size());
+  const auto feasible_count = static_cast<double>(
+      std::count_if(predictions.begin(), predictions.end(), [](const auto& prediction) { return prediction.probability > 0.0; }));
+  if (feasible_count == 0.0) return {};
+  const double infeasible_probability = std::min(infeasible_prediction_probability_, 1.0 / count);
+  const double feasible_probability = (1.0 - (count - feasible_count) * infeasible_probability) / feasible_count;
+  for (perception_msgs::msg::ObjectStatePrediction& prediction : predictions) {
+    prediction.probability = prediction.probability > 0.0 ? feasible_probability : infeasible_probability;
+  }
   return predictions;
 }
 

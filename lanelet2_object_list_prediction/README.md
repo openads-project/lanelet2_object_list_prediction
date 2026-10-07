@@ -22,7 +22,8 @@ Each feature has its own parameter group and can be switched on and off with its
 **Motion limits** (`motion_limits`)
 
 - The predicted speed along each path is limited in curves, so that the lateral acceleration stays below `max_lateral_acceleration_mps2`. The curvature is taken from the path's centerline over 3 m chords.
-- The object brakes with at most `max_longitudinal_deceleration_mps2`, early enough to reach each curve at its limited speed. It does not speed up again after a curve.
+- The object brakes with at most `max_longitudinal_deceleration_mps2`, early enough to reach each curve at its limited speed. Predictions never get faster than the object is now: after a curve, the object regains its current speed with at most `max_longitudinal_acceleration_mps2`.
+- A path is infeasible if the object is too fast to brake down for a curve ahead. Each infeasible path gets the probability `infeasible_prediction_probability`, and the feasible paths share the rest equally. If no path is feasible, the object gets the prediction set by `unmatched_object_prediction_mode` instead.
 - Disabled: objects keep their current speed along each path.
 
 ```mermaid
@@ -55,11 +56,13 @@ flowchart LR
 | `prediction_horizon_s` | `float` | `5.0` | Prediction horizon in seconds |
 | `prediction_sample_interval_s` | `float` | `0.5` | Sampling interval of predicted states in seconds |
 | `unmatched_object_prediction_mode` | `string` | `"kinematic"` | Prediction mode for objects that are not matched to the map |
+| `infeasible_prediction_probability` | `float` | `0.0` | Probability of each prediction that cannot be followed within the motion limits |
 | `participant_specific_matching.enable` | `bool` | `true` | Match and route pedestrians and two-wheelers with their own traffic rules, preferring bicycle lanes for two-wheelers |
 | `participant_specific_matching.allow_opposite_direction` | `bool` | `true` | Predict two-wheelers without a legal lanelet match against a lanelet's direction |
 | `motion_limits.enable` | `bool` | `true` | Reduce the predicted speed in curves to respect the lateral and longitudinal acceleration limits |
 | `motion_limits.max_lateral_acceleration_mps2` | `float` | `3.0` | Maximum lateral acceleration in m/s^2 of predicted objects in curves |
-| `motion_limits.max_longitudinal_deceleration_mps2` | `float` | `2.0` | Maximum longitudinal deceleration in m/s^2 of predicted objects |
+| `motion_limits.max_longitudinal_acceleration_mps2` | `float` | `1.0` | Maximum longitudinal acceleration in m/s^2 of predicted objects regaining their current speed after slowing down, e.g. after a curve; predictions never exceed the current speed |
+| `motion_limits.max_longitudinal_deceleration_mps2` | `float` | `2.0` | Maximum longitudinal deceleration in m/s^2 of predicted objects slowing down, e.g. before a curve |
 
 ## Launch Files
 
