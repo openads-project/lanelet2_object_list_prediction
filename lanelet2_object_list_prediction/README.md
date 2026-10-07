@@ -8,7 +8,7 @@ Predicts future states of multiple objects based on a Lanelet2 Map
 
 Subscribes to a list of objects in an arbitrary sensor frame, transforms them into the Lanelet2 map frame, and publishes an enriched object list with trajectory predictions attached to each object.
 
-The node matches each object to the nearest lanelets in the map, queries the routing graph for all reachable paths within the prediction horizon, and samples predicted states at fixed time intervals along each path. Objects without a lanelet match receive the prediction set by `unmatched_object_prediction_mode`.
+The node matches each object to all lanelets whose area lies within `lanelet_match_max_distance_m` of the object's position and whose direction fits its heading, queries the routing graph for all reachable paths within the prediction horizon, and samples predicted states at fixed time intervals along each path. Objects without a lanelet match receive the prediction set by `unmatched_object_prediction_mode`.
 
 Each feature has its own parameter group and can be switched on and off with its `enable` parameter.
 
