@@ -8,7 +8,9 @@ Predicts future states of multiple objects based on a Lanelet2 Map
 
 Subscribes to a list of objects in an arbitrary sensor frame, transforms them into the Lanelet2 map frame, and publishes an enriched object list with trajectory predictions attached to each object.
 
-For vehicles and other road users, the node matches each object to the nearest lanelet in the map, queries the routing graph for all reachable paths within the prediction horizon, and samples predicted states at fixed time intervals along each path. Pedestrians are not matched to the road network and receive a constant-velocity prediction instead.
+The node matches each object to all lanelets whose area lies within `lanelet_match_max_distance_m` of the object's position and whose direction fits its heading, queries the routing graph for all reachable paths within the prediction horizon, and samples predicted states at fixed time intervals along each path. Objects without a lanelet match receive the prediction set by `unmatched_object_prediction_mode`.
+
+Each feature has its own parameter group and can be switched on and off with its `enable` parameter. The features are described in [IMPLEMENTATION.md](IMPLEMENTATION.md).
 
 ```mermaid
 flowchart LR
@@ -40,6 +42,8 @@ flowchart LR
 | `prediction_horizon_s` | `float` | `5.0` | Prediction horizon in seconds |
 | `prediction_sample_interval_s` | `float` | `0.5` | Sampling interval of predicted states in seconds |
 | `unmatched_object_prediction_mode` | `string` | `"kinematic"` | Prediction mode for objects that are not matched to the map |
+| `participant_specific_matching.enable` | `bool` | `true` | Match and route pedestrians and two-wheelers with their own traffic rules, preferring bicycle lanes for two-wheelers |
+| `participant_specific_matching.allow_opposite_direction` | `bool` | `true` | Predict two-wheelers without a legal lanelet match against a lanelet's direction |
 
 ## Launch Files
 
