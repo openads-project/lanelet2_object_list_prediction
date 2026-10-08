@@ -10,14 +10,7 @@ Subscribes to a list of objects in an arbitrary sensor frame, transforms them in
 
 The node matches each object to all lanelets whose area lies within `lanelet_match_max_distance_m` of the object's position and whose direction fits its heading, queries the routing graph for all reachable paths within the prediction horizon, and samples predicted states at fixed time intervals along each path. Objects without a lanelet match receive the prediction set by `unmatched_object_prediction_mode`.
 
-Each feature has its own parameter group and can be switched on and off with its `enable` parameter.
-
-**Participant-specific matching** (`participant_specific_matching`)
-
-- Pedestrians and other vulnerable road users are matched and routed with the LL2 pedestrian rules, i.e. along walkways, crosswalks and other lanelets open to pedestrians.
-- Bicycles and micromobility use the bicycle rules, as do motorcycles on bicycle lanes. If a bicycle lane matches, other matches are dropped.
-- `allow_opposite_direction`: a two-wheeler without any legal match may be matched against a one-way lanelet's direction. It is then predicted backwards along the lanelet's legal predecessors.
-- Disabled: pedestrians are not matched, and all other objects use the vehicle rules.
+Each feature has its own parameter group and can be switched on and off with its `enable` parameter. The features are described in [IMPLEMENTATION.md](IMPLEMENTATION.md).
 
 **Motion limits** (`motion_limits`)
 
