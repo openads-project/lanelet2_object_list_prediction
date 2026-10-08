@@ -49,9 +49,40 @@ lanelet::routing::LaneletPaths oppositeDirectionPaths(const lanelet::ConstLanele
   return paths;
 }
 
-constexpr double kSpeedLimitResolutionM = 1.0;
-constexpr double kCurvatureChordLengthM = 3.0;  // long enough to smooth centerline jitter, short enough for sharp turns
+constexpr double kHeadingChordLengthM = 3.0;  // long enough to smooth centerline jitter, short enough for sharp turns
+constexpr int kHeadingMedianHalfWidth = 6;    // removes centerline steps shorter than about 6 m, keeping sustained turns
 constexpr int kSimulationStepsPerSample = 10;
+
+// Curvature every meter from `start_arc_length` along a line, from the change of its heading. A median over the
+// headings removes short steps and kinks of the line, e.g. at crossings, while turns of any length are kept.
+std::vector<double> curvaturesAlongLine(const lanelet::CompoundLineString2d& line, double start_arc_length, std::size_t count) {
+  const double length = static_cast<double>(lanelet::geometry::length(line));
+  const int half_width = kHeadingMedianHalfWidth;
+  const auto point = [&](double distance) {
+    return lanelet::geometry::interpolatedPointAtDistance(line, std::max(0.0, distance));
+  };
+
+  // Unwrapped heading of a chord every meter, starting one meter before the first curvature, straight beyond the ends
+  std::vector<double> headings;
+  for (int i = -1 - half_width; i <= static_cast<int>(count) + half_width; ++i) {
+    const double center =
+        std::min(std::max(start_arc_length + i, kHeadingChordLengthM / 2.0), length - kHeadingChordLengthM / 2.0);
+    const lanelet::BasicPoint2d chord = point(center + kHeadingChordLengthM / 2.0) - point(center - kHeadingChordLengthM / 2.0);
+    const double heading = std::atan2(chord.y(), chord.x());
+    headings.push_back(headings.empty() ? heading : headings.back() + wrap_angle_rad(heading - headings.back()));
+  }
+
+  // Median of the headings around the distance k - 1 m
+  const auto median_heading = [&](std::size_t k) {
+    std::vector<double> window(headings.begin() + static_cast<std::ptrdiff_t>(k),
+                               headings.begin() + static_cast<std::ptrdiff_t>(k) + 2 * half_width + 1);
+    std::nth_element(window.begin(), window.begin() + half_width, window.end());
+    return window[half_width];
+  };
+  std::vector<double> curvatures(count);
+  for (std::size_t i = 0; i < count; ++i) curvatures[i] = std::abs(median_heading(i + 2) - median_heading(i)) / 2.0;
+  return curvatures;
+}
 
 // Travel distance and speed at each sample time along a route. Starting at `speed`, the object brakes with at most
 // `max_deceleration` early enough to pass curves with at most `max_lateral_acceleration`, and accelerates with at most
@@ -66,23 +97,14 @@ std::pair<bool, std::vector<std::pair<double, double>>> limitedMotionAlongRoute(
                                                                                 double max_acceleration,
                                                                                 double max_deceleration) {
   // Speed limit every meter ahead: the curve speed, lowered so that the limits further ahead can be reached by braking
-  const lanelet::CompoundLineString2d centerline =
-      lanelet::LaneletSequence(lanelet::ConstLanelets(route.begin(), route.end())).centerline2d();
-  const auto point = [&](double distance) {
-    return lanelet::geometry::interpolatedPointAtDistance(centerline, std::max(0.0, start_arc_length + distance));
-  };
-  const auto limit_count =
-      static_cast<std::size_t>(speed * sample_interval * static_cast<double>(sample_count) / kSpeedLimitResolutionM) + 2;
+  const auto limit_count = static_cast<std::size_t>(speed * sample_interval * static_cast<double>(sample_count)) + 2;
+  const std::vector<double> curvatures = curvaturesAlongLine(
+      lanelet::LaneletSequence(lanelet::ConstLanelets(route.begin(), route.end())).centerline2d(), start_arc_length, limit_count);
   std::vector<double> speed_limits(limit_count, speed);
   for (std::size_t i = limit_count; i-- > 0;) {
-    // Curvature of the circle through the points one chord length before and after, infinite beyond the route's ends
-    const double distance = static_cast<double>(i) * kSpeedLimitResolutionM;
-    const double curvature = lanelet::geometry::curvature2d(point(distance - kCurvatureChordLengthM), point(distance),
-                                                            point(distance + kCurvatureChordLengthM));
-    if (std::isfinite(curvature)) speed_limits[i] = std::min(speed, std::sqrt(max_lateral_acceleration / curvature));
+    speed_limits[i] = std::min(speed, std::sqrt(max_lateral_acceleration / curvatures[i]));
     if (i + 1 < limit_count) {
-      speed_limits[i] = std::min(speed_limits[i],
-                                 std::sqrt(std::pow(speed_limits[i + 1], 2) + 2.0 * max_deceleration * kSpeedLimitResolutionM));
+      speed_limits[i] = std::min(speed_limits[i], std::sqrt(std::pow(speed_limits[i + 1], 2) + 2.0 * max_deceleration));
     }
   }
 
@@ -93,7 +115,7 @@ std::pair<bool, std::vector<std::pair<double, double>>> limitedMotionAlongRoute(
   double distance = 0.0;
   std::vector<std::pair<double, double>> motion;
   for (std::size_t step = 1; step <= sample_count * kSimulationStepsPerSample; ++step) {
-    const auto next_limit = std::min(static_cast<std::size_t>(std::ceil(distance / kSpeedLimitResolutionM)), limit_count - 1);
+    const auto next_limit = std::min(static_cast<std::size_t>(std::ceil(distance)), limit_count - 1);
     speed = std::clamp(speed_limits[next_limit], speed - max_deceleration * dt, speed + max_acceleration * dt);
     distance += speed * dt;
     if (step % kSimulationStepsPerSample == 0) motion.emplace_back(distance, speed);

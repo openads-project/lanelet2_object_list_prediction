@@ -21,7 +21,7 @@ Each feature has its own parameter group and can be switched on and off with its
 
 **Motion limits** (`motion_limits`)
 
-- The predicted speed along each path is limited in curves, so that the lateral acceleration stays below `max_lateral_acceleration_mps2`. The curvature is taken from the path's centerline over 3 m chords.
+- The predicted speed along each path is limited in curves, so that the lateral acceleration stays below `max_lateral_acceleration_mps2`. The curvature is taken from the heading of the path's centerline over 3 m chords. A median of the heading over 13 m removes short sideways steps and kinks of the map centerlines, e.g. at crossings, while turns are kept.
 - The object brakes with at most `max_longitudinal_deceleration_mps2`, early enough to reach each curve at its limited speed. Predictions never get faster than the object is now: after a curve, the object regains its current speed with at most `max_longitudinal_acceleration_mps2`.
 - A path is infeasible if the object is too fast to brake down for a curve ahead. Each infeasible path gets the probability `infeasible_prediction_probability`, and the feasible paths share the rest equally. If no path is feasible, the object gets the prediction set by `unmatched_object_prediction_mode` instead.
 - Disabled: objects keep their current speed along each path.
