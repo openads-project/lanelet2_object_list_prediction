@@ -216,9 +216,10 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
   this->declareAndLoadParameter("unmatched_object_prediction_mode", unmatched_object_prediction_mode_,
                                 "Prediction mode for objects that are not matched to the map", true, false, false, std::nullopt,
                                 std::nullopt, std::nullopt, "Allowed values: static, kinematic");
-  this->declareAndLoadParameter("infeasible_prediction_probability", infeasible_prediction_probability_,
-                                "Probability of each prediction that cannot be followed within the motion limits", true, false,
-                                false, 0.0, 1.0, 0.01);
+  this->declareAndLoadParameter(
+      "infeasible_prediction_probability", infeasible_prediction_probability_,
+      "Probability of each prediction that cannot be followed within the motion limits; with 0.0, they are not published", true,
+      false, false, 0.0, 1.0, 0.01);
   this->declareAndLoadParameter(
       "max_longitudinal_acceleration_mps2", max_longitudinal_acceleration_mps2_,
       "Maximum longitudinal acceleration in m/s^2 of predicted objects regaining their current speed after slowing down, "
@@ -656,8 +657,8 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
     predictions.push_back(prediction);
   }
 
-  // Infeasible predictions get the configured probability, feasible ones share the rest equally. Without any feasible
-  // prediction, the object gets the fallback prediction instead.
+  // Infeasible predictions get the configured probability, feasible ones share the rest equally. Infeasible predictions
+  // without probability (e.g. <= 0.0) are not published. Without any feasible prediction, the object gets the fallback prediction instead.
   const auto count = static_cast<double>(predictions.size());
   const auto feasible_count = static_cast<double>(
       std::count_if(predictions.begin(), predictions.end(), [](const auto& prediction) { return prediction.probability > 0.0; }));
@@ -667,6 +668,9 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
   for (perception_msgs::msg::ObjectStatePrediction& prediction : predictions) {
     prediction.probability = prediction.probability > 0.0 ? feasible_probability : infeasible_probability;
   }
+  predictions.erase(std::remove_if(predictions.begin(), predictions.end(),
+                                   [](const auto& prediction) { return prediction.probability <= 0.0; }),
+                    predictions.end());
   return predictions;
 }
 
