@@ -25,6 +25,6 @@ The predicted speed along each path is limited in curves so that the lateral acc
 
 Before a curve, the object brakes with at most `max_longitudinal_deceleration_mps2`. After it, the object regains its current speed with at most `max_longitudinal_acceleration_mps2`. Predictions never get faster than the object is now.
 
-A path is infeasible if the object is too fast to brake down for a curve ahead. Each infeasible path gets the probability `infeasible_prediction_probability`, and the feasible paths share the rest. If no path is feasible, `unmatched_object_prediction_mode` is used instead.
+A path is infeasible if the object is too fast to brake down for a curve ahead. Each infeasible path gets the probability `infeasible_prediction_probability`, and the feasible paths share the rest. With a probability of 0.0, infeasible paths are not published. If no path is feasible, `unmatched_object_prediction_mode` is used instead.
 
 With `enable: false`, objects keep their current speed along each path.

@@ -141,9 +141,10 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
   this->declareAndLoadParameter("unmatched_object_prediction_mode", unmatched_object_prediction_mode_,
                                 "Prediction mode for objects that are not matched to the map", true, false, false, std::nullopt,
                                 std::nullopt, std::nullopt, "Allowed values: static, kinematic");
-  this->declareAndLoadParameter("infeasible_prediction_probability", infeasible_prediction_probability_,
-                                "Probability of each prediction that cannot be followed within the motion limits", true, false,
-                                false, 0.0, 1.0, 0.01);
+  this->declareAndLoadParameter(
+      "infeasible_prediction_probability", infeasible_prediction_probability_,
+      "Probability of each prediction that cannot be followed within the motion limits; with 0.0, they are not published", true,
+      false, false, 0.0, 1.0, 0.01);
   this->declareAndLoadParameter("participant_specific_matching.enable", participant_specific_matching_enable_,
                                 "Match and route pedestrians and two-wheelers with their own traffic rules, preferring "
                                 "bicycle lanes for two-wheelers");
@@ -506,6 +507,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
             lanelet_route, match.start_arc_length, speed, prediction_sample_interval_s_, sample_count,
             motion_limits_max_lateral_acceleration_mps2_, motion_limits_max_longitudinal_acceleration_mps2_,
             motion_limits_max_longitudinal_deceleration_mps2_);
+        if (!feasible && infeasible_prediction_probability_ <= 0.0) continue;  // not published without probability
       } else {
         for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
           motion.emplace_back(speed * prediction_sample_interval_s_ * static_cast<double>(sample_index + 1), speed);
@@ -524,8 +526,8 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
     }
   }
 
-  // Infeasible predictions get the configured probability, feasible ones share the rest equally. Without any feasible
-  // prediction, the object gets the fallback prediction instead.
+  // Infeasible predictions get the configured probability, feasible ones share the rest equally. Infeasible predictions
+  // without probability (e.g. <= 0.0) are not published. Without any feasible prediction, the object gets the fallback prediction instead.
   const auto count = static_cast<double>(predictions.size());
   const auto feasible_count = static_cast<double>(
       std::count_if(predictions.begin(), predictions.end(), [](const auto& prediction) { return prediction.probability > 0.0; }));
