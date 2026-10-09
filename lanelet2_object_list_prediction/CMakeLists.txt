@@ -14,6 +14,7 @@ find_package(lanelet2_traffic_rules REQUIRED)
 find_package(perception_msgs REQUIRED)
 find_package(perception_msgs_utils REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(route_planning_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_perception_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -32,6 +33,7 @@ target_link_libraries(${TARGET_NAME} PUBLIC
   rclcpp::rclcpp
   ${geometry_msgs_TARGETS}
   ${perception_msgs_TARGETS}
+  ${route_planning_msgs_TARGETS}
   ${lanelet2_core_LIBRARIES}
   ${lanelet2_routing_LIBRARIES}
   ${lanelet2_traffic_rules_LIBRARIES}
