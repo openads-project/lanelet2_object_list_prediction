@@ -5,12 +5,14 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <tuple>
 #include <utility>
 
 #include <lanelet2_core/Attribute.h>
 #include <lanelet2_core/geometry/Lanelet.h>
 #include <lanelet2_core/geometry/LaneletMap.h>
 #include <lanelet2_core/geometry/LineString.h>
+#include <lanelet2_core/primitives/LaneletSequence.h>
 #include <lanelet2_routing/LaneletPath.h>
 #include <lanelet2_routing/RoutingGraph.h>
 #include <lanelet2_traffic_rules/TrafficRulesFactory.h>
@@ -47,6 +49,80 @@ lanelet::routing::LaneletPaths oppositeDirectionPaths(const lanelet::ConstLanele
   return paths;
 }
 
+constexpr double kHeadingChordLengthM = 3.0;  // long enough to smooth centerline jitter, short enough for sharp turns
+constexpr int kHeadingMedianHalfWidth = 6;    // removes centerline steps shorter than about 6 m, keeping sustained turns
+constexpr int kSimulationStepsPerSample = 10;
+
+// Curvature every meter from `start_arc_length` along a line, from the change of its heading. A median over the
+// headings removes short steps and kinks of the line, e.g. at crossings, while turns of any length are kept.
+std::vector<double> curvaturesAlongLine(const lanelet::CompoundLineString2d& line, double start_arc_length, std::size_t count) {
+  const double length = static_cast<double>(lanelet::geometry::length(line));
+  const int half_width = kHeadingMedianHalfWidth;
+  const auto point = [&](double distance) {
+    return lanelet::geometry::interpolatedPointAtDistance(line, std::max(0.0, distance));
+  };
+
+  // Unwrapped heading of a chord every meter, starting one meter before the first curvature, straight beyond the ends
+  std::vector<double> headings;
+  for (int i = -1 - half_width; i <= static_cast<int>(count) + half_width; ++i) {
+    const double center =
+        std::min(std::max(start_arc_length + i, kHeadingChordLengthM / 2.0), length - kHeadingChordLengthM / 2.0);
+    const lanelet::BasicPoint2d chord = point(center + kHeadingChordLengthM / 2.0) - point(center - kHeadingChordLengthM / 2.0);
+    const double heading = std::atan2(chord.y(), chord.x());
+    headings.push_back(headings.empty() ? heading : headings.back() + wrap_angle_rad(heading - headings.back()));
+  }
+
+  // Median of the headings around the distance k - 1 m
+  const auto median_heading = [&](std::size_t k) {
+    std::vector<double> window(headings.begin() + static_cast<std::ptrdiff_t>(k),
+                               headings.begin() + static_cast<std::ptrdiff_t>(k) + 2 * half_width + 1);
+    std::nth_element(window.begin(), window.begin() + half_width, window.end());
+    return window[half_width];
+  };
+  std::vector<double> curvatures(count);
+  for (std::size_t i = 0; i < count; ++i) curvatures[i] = std::abs(median_heading(i + 2) - median_heading(i)) / 2.0;
+  return curvatures;
+}
+
+// Travel distance and speed at each sample time along a route. Starting at `speed`, the object brakes with at most
+// `max_deceleration` early enough to pass curves with at most `max_lateral_acceleration`, and accelerates with at most
+// `max_acceleration` back towards its initial speed after them. Also returns whether the initial speed allows braking
+// early enough for all curves.
+std::pair<bool, std::vector<std::pair<double, double>>> limitedMotionAlongRoute(const lanelet::routing::LaneletPath& route,
+                                                                                double start_arc_length,
+                                                                                double speed,
+                                                                                double sample_interval,
+                                                                                std::size_t sample_count,
+                                                                                double max_lateral_acceleration,
+                                                                                double max_acceleration,
+                                                                                double max_deceleration) {
+  // Speed limit every meter ahead: the curve speed, lowered so that the limits further ahead can be reached by braking
+  const auto limit_count = static_cast<std::size_t>(speed * sample_interval * static_cast<double>(sample_count)) + 2;
+  const std::vector<double> curvatures = curvaturesAlongLine(
+      lanelet::LaneletSequence(lanelet::ConstLanelets(route.begin(), route.end())).centerline2d(), start_arc_length, limit_count);
+  std::vector<double> speed_limits(limit_count, speed);
+  for (std::size_t i = limit_count; i-- > 0;) {
+    speed_limits[i] = std::min(speed, std::sqrt(max_lateral_acceleration / curvatures[i]));
+    if (i + 1 < limit_count) {
+      speed_limits[i] = std::min(speed_limits[i], std::sqrt(std::pow(speed_limits[i + 1], 2) + 2.0 * max_deceleration));
+    }
+  }
+
+  const bool feasible = speed <= speed_limits.front();
+
+  // Simulate in small time steps, braking or accelerating towards the next speed limit
+  const double dt = sample_interval / kSimulationStepsPerSample;
+  double distance = 0.0;
+  std::vector<std::pair<double, double>> motion;
+  for (std::size_t step = 1; step <= sample_count * kSimulationStepsPerSample; ++step) {
+    const auto next_limit = std::min(static_cast<std::size_t>(std::ceil(distance)), limit_count - 1);
+    speed = std::clamp(speed_limits[next_limit], speed - max_deceleration * dt, speed + max_acceleration * dt);
+    distance += speed * dt;
+    if (step % kSimulationStepsPerSample == 0) motion.emplace_back(distance, speed);
+  }
+  return {feasible, motion};
+}
+
 }  // namespace
 
 Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_object_list_prediction") {
@@ -65,12 +141,31 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
   this->declareAndLoadParameter("unmatched_object_prediction_mode", unmatched_object_prediction_mode_,
                                 "Prediction mode for objects that are not matched to the map", true, false, false, std::nullopt,
                                 std::nullopt, std::nullopt, "Allowed values: static, kinematic");
+  this->declareAndLoadParameter(
+      "infeasible_prediction_probability", infeasible_prediction_probability_,
+      "Probability of each prediction that cannot be followed within the motion limits; with 0.0, they are not published", true,
+      false, false, 0.0, 1.0, 0.01);
   this->declareAndLoadParameter("participant_specific_matching.enable", participant_specific_matching_enable_,
                                 "Match and route pedestrians and two-wheelers with their own traffic rules, preferring "
                                 "bicycle lanes for two-wheelers");
   this->declareAndLoadParameter("participant_specific_matching.allow_opposite_direction",
                                 participant_specific_matching_allow_opposite_direction_,
                                 "Predict two-wheelers without a legal lanelet match against a lanelet's direction");
+  this->declareAndLoadParameter(
+      "motion_limits.enable", motion_limits_enable_,
+      "Reduce the predicted speed in curves to respect the lateral and longitudinal acceleration limits");
+  this->declareAndLoadParameter("motion_limits.max_lateral_acceleration_mps2", motion_limits_max_lateral_acceleration_mps2_,
+                                "Maximum lateral acceleration in m/s^2 of predicted objects in curves", true, false, false, 0.1,
+                                20.0, 0.1);
+  this->declareAndLoadParameter(
+      "motion_limits.max_longitudinal_acceleration_mps2", motion_limits_max_longitudinal_acceleration_mps2_,
+      "Maximum longitudinal acceleration in m/s^2 of predicted objects regaining their current speed after slowing down, "
+      "e.g. after a curve; predictions never exceed the current speed",
+      true, false, false, 0.0, 20.0, 0.1);
+  this->declareAndLoadParameter(
+      "motion_limits.max_longitudinal_deceleration_mps2", motion_limits_max_longitudinal_deceleration_mps2_,
+      "Maximum longitudinal deceleration in m/s^2 of predicted objects slowing down, e.g. before a curve", true, false, false,
+      0.1, 20.0, 0.1);
   this->setup();
 }
 
@@ -360,11 +455,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
     } else {
       predictions.push_back(createConstantVelocityPrediction(prediction_object.object, base_time));
     }
-  }
-
-  const double probability = 1.0 / static_cast<double>(predictions.size());
-  for (perception_msgs::msg::ObjectStatePrediction& prediction : predictions) {
-    prediction.probability = probability;
+    predictions.back().probability = 1.0;
   }
   return predictions;
 }
@@ -408,17 +499,44 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
     }
 
     for (const lanelet::routing::LaneletPath& lanelet_route : routes) {
+      // Travel distance and speed at each sample
+      bool feasible = true;
+      std::vector<std::pair<double, double>> motion;
+      if (motion_limits_enable_ && max_travel_distance > std::numeric_limits<double>::epsilon()) {
+        std::tie(feasible, motion) = limitedMotionAlongRoute(
+            lanelet_route, match.start_arc_length, speed, prediction_sample_interval_s_, sample_count,
+            motion_limits_max_lateral_acceleration_mps2_, motion_limits_max_longitudinal_acceleration_mps2_,
+            motion_limits_max_longitudinal_deceleration_mps2_);
+        if (!feasible && infeasible_prediction_probability_ <= 0.0) continue;  // not published without probability
+      } else {
+        for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
+          motion.emplace_back(speed * prediction_sample_interval_s_ * static_cast<double>(sample_index + 1), speed);
+        }
+      }
+
       perception_msgs::msg::ObjectStatePrediction prediction;
       prediction.states.reserve(sample_count);
       for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
-        const double travel_distance = speed * prediction_sample_interval_s_ * static_cast<double>(sample_index + 1);
         prediction.states.push_back(sampleStateOnLaneletRoute(prediction_object.object.state, lanelet_route,
-                                                              match.start_arc_length, travel_distance, base_time, sample_index));
+                                                              match.start_arc_length, motion[sample_index].first,
+                                                              motion[sample_index].second, base_time, sample_index));
       }
+      prediction.probability = feasible ? 1.0 : 0.0;  // marks feasibility until the probabilities are assigned below
       predictions.push_back(prediction);
     }
   }
 
+  // Infeasible predictions get the configured probability, feasible ones share the rest equally. Infeasible predictions
+  // without probability (e.g. <= 0.0) are not published. Without any feasible prediction, the object gets the fallback prediction instead.
+  const auto count = static_cast<double>(predictions.size());
+  const auto feasible_count = static_cast<double>(
+      std::count_if(predictions.begin(), predictions.end(), [](const auto& prediction) { return prediction.probability > 0.0; }));
+  if (feasible_count == 0.0) return {};
+  const double infeasible_probability = std::min(infeasible_prediction_probability_, 1.0 / count);
+  const double feasible_probability = (1.0 - (count - feasible_count) * infeasible_probability) / feasible_count;
+  for (perception_msgs::msg::ObjectStatePrediction& prediction : predictions) {
+    prediction.probability = prediction.probability > 0.0 ? feasible_probability : infeasible_probability;
+  }
   return predictions;
 }
 
@@ -476,6 +594,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
     const lanelet::routing::LaneletPath& route,
     double start_arc_length,
     double travel_distance,
+    double speed,
     const builtin_interfaces::msg::Time& base_time,
     std::size_t sample_index) const {
   perception_msgs::msg::ObjectState state = base_state;
@@ -484,7 +603,6 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
     return state;
   }
 
-  const double speed = travel_distance / (prediction_sample_interval_s_ * static_cast<double>(sample_index + 1));
   double distance_on_route = start_arc_length + travel_distance;
   geometry_msgs::msg::Point fallback_position;
   try {

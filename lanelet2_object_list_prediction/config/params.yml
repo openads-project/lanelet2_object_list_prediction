@@ -5,7 +5,13 @@
     lanelet_match_max_yaw_diff_rad: 1.047197551
     prediction_horizon_s: 5.0
     prediction_sample_interval_s: 0.5
-    unmatched_object_prediction_mode: kinematic
+    unmatched_object_prediction_mode: static
+    infeasible_prediction_probability: 0.0
     participant_specific_matching:
       enable: true                    # match and route pedestrians and two-wheelers with their own traffic rules, preferring bicycle lanes for two-wheelers
       allow_opposite_direction: true  # predict two-wheelers without a legal lanelet match against a lanelet's direction
+    motion_limits:
+      enable: true                             # reduce the predicted speed in curves to respect the acceleration limits
+      max_lateral_acceleration_mps2: 3.0       # maximum lateral acceleration of predicted objects in curves
+      max_longitudinal_acceleration_mps2: 1.0  # maximum acceleration for regaining the current speed after slowing down, e.g. after a curve
+      max_longitudinal_deceleration_mps2: 2.0  # maximum deceleration for slowing down, e.g. before a curve

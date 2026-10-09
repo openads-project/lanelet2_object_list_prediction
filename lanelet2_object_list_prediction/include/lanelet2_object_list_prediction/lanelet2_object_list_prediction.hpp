@@ -147,7 +147,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    *
    * @param prediction_object object and lanelet matches in map frame
    * @param base_time time stamp of the input object list
-   * @return one prediction per possible lanelet route
+   * @return one prediction per possible lanelet route, infeasible ones with the configured probability
    */
   std::vector<perception_msgs::msg::ObjectStatePrediction> createMapBasedPredictions(
       const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
@@ -179,6 +179,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @param route lanelet route to sample
    * @param start_arc_length current object position along the first route lanelet
    * @param travel_distance distance to travel along the route from the current position
+   * @param speed predicted speed at the sample
    * @param base_time time stamp of the input object list
    * @param sample_index zero-based prediction sample index
    * @return predicted object state at the requested sample
@@ -187,6 +188,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
                                                               const lanelet::routing::LaneletPath& route,
                                                               double start_arc_length,
                                                               double travel_distance,
+                                                              double speed,
                                                               const builtin_interfaces::msg::Time& base_time,
                                                               std::size_t sample_index) const;
 
@@ -284,6 +286,11 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   std::string unmatched_object_prediction_mode_ = "kinematic";
 
   /**
+   * @brief Probability of each prediction that cannot be followed within the motion limits (parameter)
+   */
+  double infeasible_prediction_probability_ = 0.0;
+
+  /**
    * @brief Whether pedestrians and two-wheelers are matched and routed with their own traffic rules (parameter)
    */
   bool participant_specific_matching_enable_ = true;
@@ -292,6 +299,26 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Whether two-wheelers without a legal match may be predicted against a lanelet's direction (parameter)
    */
   bool participant_specific_matching_allow_opposite_direction_ = true;
+
+  /**
+   * @brief Whether the predicted speed is reduced in curves to respect the acceleration limits (parameter)
+   */
+  bool motion_limits_enable_ = true;
+
+  /**
+   * @brief Maximum lateral acceleration of predicted objects in curves in m/s^2 (parameter)
+   */
+  double motion_limits_max_lateral_acceleration_mps2_ = 3.0;
+
+  /**
+   * @brief Maximum acceleration in m/s^2 for regaining the current speed after slowing down (parameter)
+   */
+  double motion_limits_max_longitudinal_acceleration_mps2_ = 1.0;
+
+  /**
+   * @brief Maximum deceleration in m/s^2 for slowing down, e.g. before a curve (parameter)
+   */
+  double motion_limits_max_longitudinal_deceleration_mps2_ = 2.0;
 
   /**
    * @brief Traffic rules and routing graphs used for lanelet matching and routing, per traffic participant type
