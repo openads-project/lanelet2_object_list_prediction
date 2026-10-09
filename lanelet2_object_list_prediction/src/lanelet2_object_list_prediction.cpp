@@ -226,7 +226,7 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
       true, false, false, 0.0, 20.0, 0.1);
   this->declareAndLoadParameter(
       "max_longitudinal_deceleration_mps2", max_longitudinal_deceleration_mps2_,
-      "Maximum longitudinal deceleration in m/s^2 of predicted objects slowing down, e.g. before a curve or a yield line.", true,
+      "Maximum longitudinal deceleration in m/s^2 of predicted objects slowing down, e.g. before a curve or a yield line", true,
       false, false, 0.1, 20.0, 0.1);
   this->declareAndLoadParameter("participant_specific_matching.enable", participant_specific_matching_enable_,
                                 "Match and route pedestrians and two-wheelers with their own traffic rules, preferring "
