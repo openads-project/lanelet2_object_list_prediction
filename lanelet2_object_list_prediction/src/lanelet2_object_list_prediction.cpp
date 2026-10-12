@@ -51,38 +51,40 @@ lanelet::routing::LaneletPaths oppositeDirectionPaths(const lanelet::ConstLanele
 
 constexpr double kHeadingChordLengthM = 3.0;  // long enough to smooth centerline jitter, short enough for sharp turns
 constexpr int kHeadingMedianHalfWidth = 6;    // removes centerline steps shorter than about 6 m, keeping sustained turns
-constexpr int kSimulationStepsPerSample = 10;
 
-// Curvature every meter from `start_arc_length` along a line, from the change of its heading. A median over the
-// headings removes short steps and kinks of the line, e.g. at crossings, while turns of any length are kept.
+// Curvature every meter from `start_arc_length` along a line, from the change of its heading. The heading at
+// each meter is the median over ±l6 m, as map centerlines have short sideways steps and kinks, e.g. at crossings, which
+// would otherwise look like sharp curves. Turns of any length are kept, as they change the heading for good.
 std::vector<double> curvaturesAlongLine(const lanelet::CompoundLineString2d& line, double start_arc_length, std::size_t count) {
   const double length = static_cast<double>(lanelet::geometry::length(line));
   const int half_width = kHeadingMedianHalfWidth;
-  const auto point = [&](double distance) {
-    return lanelet::geometry::interpolatedPointAtDistance(line, std::max(0.0, distance));
-  };
 
-  // Unwrapped heading of a chord every meter, starting one meter before the first curvature, straight beyond the ends
+  // Heading of a chord around each meter, unwrapped to be continuous. Chords stay on the line, so it continues straight
+  // beyond its ends.
   std::vector<double> headings;
   for (int i = -1 - half_width; i <= static_cast<int>(count) + half_width; ++i) {
-    const double center =
-        std::min(std::max(start_arc_length + i, kHeadingChordLengthM / 2.0), length - kHeadingChordLengthM / 2.0);
-    const lanelet::BasicPoint2d chord = point(center + kHeadingChordLengthM / 2.0) - point(center - kHeadingChordLengthM / 2.0);
+    const double chord_start =
+        std::max(0.0, std::min(start_arc_length + i - kHeadingChordLengthM / 2.0, length - kHeadingChordLengthM));
+    const lanelet::BasicPoint2d chord = lanelet::geometry::interpolatedPointAtDistance(line, chord_start + kHeadingChordLengthM) -
+                                        lanelet::geometry::interpolatedPointAtDistance(line, chord_start);
     const double heading = std::atan2(chord.y(), chord.x());
     headings.push_back(headings.empty() ? heading : headings.back() + wrap_angle_rad(heading - headings.back()));
   }
 
-  // Median of the headings around the distance k - 1 m
-  const auto median_heading = [&](std::size_t k) {
-    std::vector<double> window(headings.begin() + static_cast<std::ptrdiff_t>(k),
-                               headings.begin() + static_cast<std::ptrdiff_t>(k) + 2 * half_width + 1);
+  // Median heading at each meter, from 1 m before the first curvature to 1 m after the last
+  std::vector<double> median_headings;
+  for (auto window_start = headings.begin(); window_start + 2 * half_width < headings.end(); ++window_start) {
+    std::vector<double> window(window_start, window_start + 2 * half_width + 1);
     std::nth_element(window.begin(), window.begin() + half_width, window.end());
-    return window[half_width];
-  };
+    median_headings.push_back(window[half_width]);
+  }
+
   std::vector<double> curvatures(count);
-  for (std::size_t i = 0; i < count; ++i) curvatures[i] = std::abs(median_heading(i + 2) - median_heading(i)) / 2.0;
+  for (std::size_t i = 0; i < count; ++i) curvatures[i] = std::abs(median_headings[i + 2] - median_headings[i]) / 2.0;
   return curvatures;
 }
+
+constexpr int kSimulationStepsPerSample = 10;  // steps short enough not to skip the speed limits set every meter
 
 // Travel distance and speed at each sample time along a route. Starting at `speed`, the object brakes with at most
 // `max_deceleration` early enough to pass curves with at most `max_lateral_acceleration`, and accelerates with at most
