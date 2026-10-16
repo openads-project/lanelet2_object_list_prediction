@@ -6,4 +6,4 @@ repositories:
   perception_interfaces:
     type: git
     url: https://github.com/ika-rwth-aachen/perception_interfaces.git
-    version: eeffd0e1032676431616260d1d0b4d05d57104d0
+    version: fix/allow-empty-state-covariance # TODO: v1.2.0
