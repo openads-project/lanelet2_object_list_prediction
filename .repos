@@ -7,7 +7,3 @@ repositories:
     type: git
     url: https://github.com/ika-rwth-aachen/perception_interfaces.git
     version: fix/allow-empty-state-covariance # TODO: v1.2.0
-  rviz_2d_overlay_plugins: # recursive .repos dependency of perception_interfaces, required to run industrial_ci
-    type: git # TODO: remove once merged and released: https://github.com/ika-rwth-aachen/rviz_2d_overlay_plugins/pull/2
-    url: https://github.com/ika-rwth-aachen/rviz_2d_overlay_plugins.git
-    version: new/camera-overlay-fix
