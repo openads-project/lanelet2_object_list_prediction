@@ -2,8 +2,8 @@ repositories:
   lanelet2_map_server:
     type: git
     url: https://github.com/openads-project/lanelet2_map_server.git
-    version: v1.2.1
+    version: v1.2.3
   perception_interfaces:
     type: git
     url: https://github.com/ika-rwth-aachen/perception_interfaces.git
-    version: v1.0.0
+    version: fix/allow-empty-state-covariance # TODO: v1.2.0
