@@ -50,8 +50,10 @@ lanelet::routing::LaneletPaths oppositeDirectionPaths(const lanelet::ConstLanele
   return paths;
 }
 
-constexpr double kHeadingChordLengthM = 3.0;  // chord length to smooth: increase in case of high centerline jitter, decrease for sharp turns
-constexpr int kHeadingMedianHalfWidth = 6;    // removes centerline steps shorter than X m, keeping sustained turns
+// Chord length to smooth: increase in case of high centerline jitter, decrease for sharp turns
+constexpr double kHeadingChordLengthM = 3.0;
+// Removes centerline steps shorter than about kHeadingMedianHalfWidth - kHeadingChordLengthM = 3 m, keeping sustained turns
+constexpr int kHeadingMedianHalfWidth = 6;
 
 // Curvature every meter from `start_arc_length` along a line, from the change of its heading. The heading at
 // each meter is the median over ± kHeadingMedianHalfWidth m, as map centerlines have short sideways steps and kinks, which
@@ -666,7 +668,8 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
   }
 
   // Infeasible predictions get the configured probability, feasible ones share the rest equally. Infeasible predictions
-  // without probability (e.g. <= 0.0) are not published. Without any feasible prediction, the object gets the fallback prediction instead.
+  // without probability (e.g. <= 0.0) are not published. Without any feasible prediction, the object gets the fallback
+  // prediction instead.
   const auto count = static_cast<double>(predictions.size());
   const auto feasible_count = static_cast<double>(
       std::count_if(predictions.begin(), predictions.end(), [](const auto& prediction) { return prediction.probability > 0.0; }));
