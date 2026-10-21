@@ -21,7 +21,17 @@ With `enable: false`, `PEDESTRIAN` objects are not matched, and all other object
 
 ## Motion limits
 
-The predicted speed along each path is limited in curves so that the lateral acceleration stays below `max_lateral_acceleration_mps2`. The curvature comes from the centerline heading, median-filtered to remove kinks of the map centerlines, e.g. at crossings.
+The predicted speed along each path is limited in curves so that the lateral acceleration stays below `max_lateral_acceleration_mps2`. The curvature comes from the centerline heading, median-filtered to remove kinks of the map centerlines, e.g. at crossings:
+
+1. The raw heading at every meter is the direction of a configurable (kHeadingChordLengthM) chord around it.
+2. The median over the raw headings within ± kHeadingMedianHalfWidth m ignores short steps and kinks, which only tilt a few of them. In a turn, the headings change steadily, so the median keeps it.
+3. The curvature at every meter is the change of the median heading per meter, from 1 m before to 1 m after it.
+
+For stronger smoothing, increase `kHeadingMedianHalfWidth` to also ignore longer steps and kinks, at the cost of flattening S-curves shorter than the window, or increase `kHeadingChordLengthM` to average out more centerline jitter, at the cost of spreading sharp turns over the chord length and lowering their peak curvature.
+
+<p align="center">
+  <img src="../assets/curvature_median_filter.svg" alt="Curvature from the median-filtered centerline heading" width="800"/>
+</p>
 
 Before a curve, the object brakes with at most `max_longitudinal_deceleration_mps2`. After it, the object regains its current speed with at most `max_longitudinal_acceleration_mps2`. Predictions never get faster than the object is now. Both longitudinal limits are top-level parameters, as yielding uses them as well.
 

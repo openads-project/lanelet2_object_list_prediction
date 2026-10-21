@@ -50,18 +50,20 @@ lanelet::routing::LaneletPaths oppositeDirectionPaths(const lanelet::ConstLanele
   return paths;
 }
 
-constexpr double kHeadingChordLengthM = 3.0;  // long enough to smooth centerline jitter, short enough for sharp turns
-constexpr int kHeadingMedianHalfWidth = 6;    // removes centerline steps shorter than about 6 m, keeping sustained turns
+constexpr double kHeadingChordLengthM = 3.0;  // chord length to smooth: increase in case of high centerline jitter, decrease for sharp turns
+constexpr int kHeadingMedianHalfWidth = 6;    // removes centerline steps shorter than X m, keeping sustained turns
 
 // Curvature every meter from `start_arc_length` along a line, from the change of its heading. The heading at
-// each meter is the median over ±l6 m, as map centerlines have short sideways steps and kinks, e.g. at crossings, which
-// would otherwise look like sharp curves. Turns of any length are kept, as they change the heading for good.
+// each meter is the median over ± kHeadingMedianHalfWidth m, as map centerlines have short sideways steps and kinks, which
+// would otherwise look like sharp curves. Turns of any length are kept, as they change the heading.
 std::vector<double> curvaturesAlongLine(const lanelet::CompoundLineString2d& line, double start_arc_length, std::size_t count) {
   const double length = static_cast<double>(lanelet::geometry::length(line));
   const int half_width = kHeadingMedianHalfWidth;
 
-  // Heading of a chord around each meter, unwrapped to be continuous. Chords stay on the line, so it continues straight
-  // beyond its ends.
+  // 1. Raw heading every meter, as the direction of the chord from kHeadingChordLengthM / 2 before to
+  //    kHeadingChordLengthM / 2 after that meter. They reach half_width + 1 m beyond the curvatures on both sides: 1 m
+  //    because each curvature uses the median headings 1 m before and after it, and half_width m because each median
+  //    uses the raw headings around it.
   std::vector<double> headings;
   for (int i = -1 - half_width; i <= static_cast<int>(count) + half_width; ++i) {
     const double chord_start =
@@ -72,7 +74,9 @@ std::vector<double> curvaturesAlongLine(const lanelet::CompoundLineString2d& lin
     headings.push_back(headings.empty() ? heading : headings.back() + wrap_angle_rad(heading - headings.back()));
   }
 
-  // Median heading at each meter, from 1 m before the first curvature to 1 m after the last
+  // 2. Median of the 2 * half_width + 1 raw headings around each meter, from 1 m before the first curvature to 1 m after
+  //    the last. A short step or kink only changes a few headings in the window, which the median ignores. In a turn,
+  //    the headings change steadily in one direction, so the median is the heading at the center and the turn is kept.
   std::vector<double> median_headings;
   for (auto window_start = headings.begin(); window_start + 2 * half_width < headings.end(); ++window_start) {
     std::vector<double> window(window_start, window_start + 2 * half_width + 1);
@@ -80,6 +84,7 @@ std::vector<double> curvaturesAlongLine(const lanelet::CompoundLineString2d& lin
     median_headings.push_back(window[half_width]);
   }
 
+  // 3. Curvature at each meter, as the change of the median heading per meter from 1 m before to 1 m after it
   std::vector<double> curvatures(count);
   for (std::size_t i = 0; i < count; ++i) curvatures[i] = std::abs(median_headings[i + 2] - median_headings[i]) / 2.0;
   return curvatures;
