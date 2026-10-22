@@ -14,6 +14,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <lanelet2_map_interface/lanelet2_map_interface.hpp>
+#include <perception_msgs/msg/ego_data.hpp>
 #include <perception_msgs/msg/object_list.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <route_planning_msgs/msg/route.hpp>
@@ -26,6 +27,17 @@ template <typename T, typename A>
 struct is_vector<std::vector<T, A>> : std::true_type {};
 template <typename C>
 inline constexpr bool is_vector_v = is_vector<C>::value;
+
+/**
+ * @brief Predicted motion of a road user that others may follow, at the start and at each prediction sample time
+ */
+struct Leader {
+  const perception_msgs::msg::Object* object;    ///< Leading object, or nullptr for ego
+  double rear_offset;                            ///< Offset from the reference point to the rear along the heading
+  std::vector<lanelet::BasicPoint2d> positions;  ///< Reference point in map frame, as long as known
+  std::vector<double> yaws;                      ///< Yaw in map frame
+  std::vector<double> speeds;                    ///< Speed in m/s
+};
 
 /**
  * @brief Lanelet2ObjectListPrediction class
@@ -144,11 +156,22 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
       const PredictionObject& prediction_object) const;
 
   /**
+   * @brief Creates the leaders that objects follow: the predictions of all objects and ego's planned trajectory
+   *
+   * @param prediction_objects objects in map frame with their predictions
+   * @param base_time time stamp of the input object list
+   * @return one leader per prediction, and one for ego while its planned trajectory covers the prediction times
+   */
+  std::vector<Leader> createLeaders(const std::vector<PredictionObject>& prediction_objects,
+                                    const builtin_interfaces::msg::Time& base_time) const;
+
+  /**
    * @brief Dispatches prediction creation for one object
    *
    * @param prediction_object object, lanelet matches and routes in map frame
    * @param scene all objects of the object list with their routes, for yielding
    * @param ego_route planned route of ego in map frame, for yielding
+   * @param leaders leaders to keep the distance to, for following
    * @param base_time time stamp of the first received state
    * @return map-based predictions or the configured fallback prediction
    */
@@ -156,6 +179,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
       const PredictionObject& prediction_object,
       const std::vector<PredictionObject>& scene,
       const std::vector<lanelet::BasicPoint2d>& ego_route,
+      const std::vector<Leader>& leaders,
       const builtin_interfaces::msg::Time& base_time) const;
 
   /**
@@ -164,6 +188,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @param prediction_object object, lanelet matches and routes in map frame
    * @param scene all objects of the object list with their routes, for yielding
    * @param ego_route planned route of ego in map frame, for yielding
+   * @param leaders leaders to keep the distance to, for following
    * @param base_time time stamp of the input object list
    * @return one prediction per possible lanelet route, infeasible ones with the configured probability
    */
@@ -171,6 +196,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
       const PredictionObject& prediction_object,
       const std::vector<PredictionObject>& scene,
       const std::vector<lanelet::BasicPoint2d>& ego_route,
+      const std::vector<Leader>& leaders,
       const builtin_interfaces::msg::Time& base_time) const;
 
   /**
@@ -267,6 +293,16 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   route_planning_msgs::msg::Route::ConstSharedPtr latest_route_;
 
   /**
+   * @brief Subscriber for ego data with ego's planned trajectory, which objects behind ego follow
+   */
+  rclcpp::Subscription<perception_msgs::msg::EgoData>::SharedPtr ego_data_subscriber_;
+
+  /**
+   * @brief Latest received ego data
+   */
+  perception_msgs::msg::EgoData::ConstSharedPtr latest_ego_data_;
+
+  /**
    * @brief Publisher
    */
   rclcpp::Publisher<perception_msgs::msg::ObjectList>::SharedPtr publisher_;
@@ -355,6 +391,16 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Whether objects stop at yield lines for conflicting priority traffic (parameter)
    */
   bool yielding_enable_ = true;
+
+  /**
+   * @brief Whether objects keep a distance to leaders ahead on their routes (parameter)
+   */
+  bool following_enable_ = true;
+
+  /**
+   * @brief Minimum distance in meters that objects keep to the rear of their leader (parameter)
+   */
+  double following_min_distance_m_ = 2.0;
 
   /**
    * @brief Traffic rules and routing graphs used for lanelet matching and routing, per traffic participant type
