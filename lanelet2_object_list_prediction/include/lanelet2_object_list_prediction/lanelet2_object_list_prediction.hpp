@@ -16,6 +16,7 @@
 #include <lanelet2_map_interface/lanelet2_map_interface.hpp>
 #include <perception_msgs/msg/object_list.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <route_planning_msgs/msg/route.hpp>
 
 namespace lanelet2_object_list_prediction {
 
@@ -63,6 +64,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   struct PredictionObject {
     perception_msgs::msg::Object object;        ///< Object in map frame, later enriched with state predictions
     std::vector<LaneletMatch> lanelet_matches;  ///< Lanelet candidates accepted for map-based prediction
+    std::vector<std::pair<LaneletMatch, lanelet::routing::LaneletPath>> routes;  ///< Possible routes from each match
   };
 
   /**
@@ -133,24 +135,43 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   void rebuildRoutingGraphFromMap();
 
   /**
-   * @brief Dispatches prediction creation for one object
+   * @brief Creates the possible routes within the prediction horizon from each lanelet match of an object
    *
    * @param prediction_object object and lanelet matches in map frame
+   * @return pairs of lanelet match and route starting at the matched lanelet
+   */
+  std::vector<std::pair<LaneletMatch, lanelet::routing::LaneletPath>> createRoutes(
+      const PredictionObject& prediction_object) const;
+
+  /**
+   * @brief Dispatches prediction creation for one object
+   *
+   * @param prediction_object object, lanelet matches and routes in map frame
+   * @param scene all objects of the object list with their routes, for yielding
+   * @param ego_route planned route of ego in map frame, for yielding
    * @param base_time time stamp of the first received state
    * @return map-based predictions or the configured fallback prediction
    */
   std::vector<perception_msgs::msg::ObjectStatePrediction> createPredictionsForMatchedObject(
-      const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+      const PredictionObject& prediction_object,
+      const std::vector<PredictionObject>& scene,
+      const std::vector<lanelet::BasicPoint2d>& ego_route,
+      const builtin_interfaces::msg::Time& base_time) const;
 
   /**
-   * @brief Creates route alternatives for an object matched to lanelets
+   * @brief Creates one prediction per route of an object
    *
-   * @param prediction_object object and lanelet matches in map frame
+   * @param prediction_object object, lanelet matches and routes in map frame
+   * @param scene all objects of the object list with their routes, for yielding
+   * @param ego_route planned route of ego in map frame, for yielding
    * @param base_time time stamp of the input object list
    * @return one prediction per possible lanelet route, infeasible ones with the configured probability
    */
   std::vector<perception_msgs::msg::ObjectStatePrediction> createMapBasedPredictions(
-      const PredictionObject& prediction_object, const builtin_interfaces::msg::Time& base_time) const;
+      const PredictionObject& prediction_object,
+      const std::vector<PredictionObject>& scene,
+      const std::vector<lanelet::BasicPoint2d>& ego_route,
+      const builtin_interfaces::msg::Time& base_time) const;
 
   /**
    * @brief Creates a stationary fallback prediction
@@ -236,6 +257,16 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   rclcpp::Subscription<perception_msgs::msg::ObjectList>::SharedPtr subscriber_;
 
   /**
+   * @brief Subscriber for the planned route of ego, which has right of way for yielding
+   */
+  rclcpp::Subscription<route_planning_msgs::msg::Route>::SharedPtr route_subscriber_;
+
+  /**
+   * @brief Latest received route of ego
+   */
+  route_planning_msgs::msg::Route::ConstSharedPtr latest_route_;
+
+  /**
    * @brief Publisher
    */
   rclcpp::Publisher<perception_msgs::msg::ObjectList>::SharedPtr publisher_;
@@ -291,6 +322,16 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   double infeasible_prediction_probability_ = 0.0;
 
   /**
+   * @brief Maximum acceleration in m/s^2 for regaining the current speed after slowing down (parameter)
+   */
+  double max_longitudinal_acceleration_mps2_ = 1.0;
+
+  /**
+   * @brief Maximum deceleration in m/s^2 for slowing down, e.g. before a curve or a yield line (parameter)
+   */
+  double max_longitudinal_deceleration_mps2_ = 3.0;
+
+  /**
    * @brief Whether pedestrians and two-wheelers are matched and routed with their own traffic rules (parameter)
    */
   bool participant_specific_matching_enable_ = true;
@@ -311,14 +352,9 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   double motion_limits_max_lateral_acceleration_mps2_ = 3.0;
 
   /**
-   * @brief Maximum acceleration in m/s^2 for regaining the current speed after slowing down (parameter)
+   * @brief Whether objects stop at yield lines for conflicting priority traffic (parameter)
    */
-  double motion_limits_max_longitudinal_acceleration_mps2_ = 1.0;
-
-  /**
-   * @brief Maximum deceleration in m/s^2 for slowing down, e.g. before a curve (parameter)
-   */
-  double motion_limits_max_longitudinal_deceleration_mps2_ = 2.0;
+  bool yielding_enable_ = true;
 
   /**
    * @brief Traffic rules and routing graphs used for lanelet matching and routing, per traffic participant type

@@ -8,6 +8,7 @@ services:
       NAME: lanelet2_object_list_prediction
       # --- inputs ----
       TRACKED_OBJECT_LIST_TOPIC: ~/tracked_object_list
+      ROUTE_TOPIC: ~/route
       # --- outputs ---
       OBJECT_LIST_TOPIC: ~/object_list
       # --- other -----
@@ -27,6 +28,7 @@ services:
           params:=$${PARAMS} \
           ros_tracing:=$${ROS_TRACING} \
           tracked_object_list_topic:=$${TRACKED_OBJECT_LIST_TOPIC} \
+          route_topic:=$${ROUTE_TOPIC} \
           object_list_topic:=$${OBJECT_LIST_TOPIC}
     # volumes:
     #   - ./params.yml:/docker-ros/ws/install/lanelet2_object_list_prediction/share/lanelet2_object_list_prediction/config/params.yml
