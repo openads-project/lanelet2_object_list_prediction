@@ -227,6 +227,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @param start_arc_length current object position along the first route lanelet
    * @param travel_distance distance to travel along the route from the current position
    * @param speed predicted speed at the sample
+   * @param lane_offset lateral position in the lane relative to the distance from centerline to bound, 0 on the centerline
    * @param base_time time stamp of the input object list
    * @param sample_index zero-based prediction sample index
    * @return predicted object state at the requested sample
@@ -236,6 +237,7 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
                                                               double start_arc_length,
                                                               double travel_distance,
                                                               double speed,
+                                                              double lane_offset,
                                                               const builtin_interfaces::msg::Time& base_time,
                                                               std::size_t sample_index) const;
 
@@ -338,7 +340,6 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   double lanelet_match_max_yaw_diff_rad_ = 1.57079632679;
 
   /**
-  /**
    * @brief Whether objects are matched to their nearest lanelets by the share of their footprint on them (parameter)
    */
   bool lane_coverage_matching_enable_ = true;
@@ -377,6 +378,12 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
    * @brief Maximum deceleration in m/s^2 for slowing down, e.g. before a curve or a yield line (parameter)
    */
   double max_longitudinal_deceleration_mps2_ = 3.0;
+
+  /**
+   * @brief Whether objects keep their lateral position in the lane relative to its width instead of following the
+   * centerline (parameter)
+   */
+  bool keep_lane_offset_ = true;
 
   /**
    * @brief Whether pedestrians and two-wheelers are matched and routed with their own traffic rules (parameter)

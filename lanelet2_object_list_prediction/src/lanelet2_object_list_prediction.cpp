@@ -284,6 +284,20 @@ std::vector<std::pair<double, double>> closestLeaderAlongRoute(const lanelet::ro
   return any_leader ? closest : std::vector<std::pair<double, double>>{};
 }
 
+// Distance from a lanelet's centerline to its left or right bound at an arc length
+double laneHalfWidth(const lanelet::ConstLanelet& lanelet, double arc_length, bool left) {
+  const lanelet::BasicPoint2d center = lanelet::geometry::interpolatedPointAtDistance(lanelet.centerline2d(), arc_length);
+  return lanelet::geometry::distance2d(center, left ? lanelet.leftBound2d() : lanelet.rightBound2d());
+}
+
+// Lateral position of a point in a lanelet, relative to the distance from the centerline to the bound on its side:
+// 0 on the centerline, 1 on the left bound and -1 on the right bound
+double relativeLaneOffset(const lanelet::ConstLanelet& lanelet, const lanelet::BasicPoint2d& point) {
+  const lanelet::ArcCoordinates arc = lanelet::geometry::toArcCoordinates(lanelet.centerline2d(), point);
+  const double half_width = laneHalfWidth(lanelet, std::max(0.0, arc.length), arc.distance > 0.0);
+  return half_width > 0.0 ? std::clamp(arc.distance / half_width, -1.0, 1.0) : 0.0;
+}
+
 using BoostPolygon = boost::geometry::model::polygon<lanelet::BasicPoint2d>;
 using BoostMultiPolygon = boost::geometry::model::multi_polygon<BoostPolygon>;
 
@@ -352,6 +366,9 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
       "max_longitudinal_deceleration_mps2", max_longitudinal_deceleration_mps2_,
       "Maximum longitudinal deceleration in m/s^2 of predicted objects slowing down, e.g. before a curve or a yield line", true,
       false, false, 0.1, 20.0, 0.1);
+  this->declareAndLoadParameter("keep_lane_offset", keep_lane_offset_,
+                                "Keep the object's lateral position in its lane, relative to the lane width, instead of "
+                                "predicting it along the centerline");
   this->declareAndLoadParameter("participant_specific_matching.enable", participant_specific_matching_enable_,
                                 "Match and route pedestrians and two-wheelers with their own traffic rules, preferring "
                                 "bicycle lanes for two-wheelers");
@@ -861,6 +878,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
   }
   const std::size_t sample_count = getPredictionSampleCount();
   const double max_travel_distance = speed * prediction_sample_interval_s_ * static_cast<double>(sample_count);
+  const geometry_msgs::msg::Point position = perception_msgs::object_access::getPosition(prediction_object.object);
 
   // Routes of all other objects, which have right of way where they pass a right-of-way lanelet
   std::vector<lanelet::routing::LaneletPath> priority_routes;
@@ -898,12 +916,16 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
       }
     }
 
+    // The object keeps its lateral position in the lane relative to the lane width, or follows the centerline
+    const double lane_offset =
+        keep_lane_offset_ ? relativeLaneOffset(match.lanelet, lanelet::BasicPoint2d(position.x, position.y)) : 0.0;
+
     perception_msgs::msg::ObjectStatePrediction prediction;
     prediction.states.reserve(sample_count);
     for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
       prediction.states.push_back(sampleStateOnLaneletRoute(prediction_object.object.state, lanelet_route, match.start_arc_length,
-                                                            motion[sample_index].first, motion[sample_index].second, base_time,
-                                                            sample_index));
+                                                            motion[sample_index].first, motion[sample_index].second, lane_offset,
+                                                            base_time, sample_index));
     }
     prediction.probability = feasible ? 1.0 : 0.0;  // marks feasibility until the probabilities are assigned below
     predictions.push_back(prediction);
@@ -981,6 +1003,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
     double start_arc_length,
     double travel_distance,
     double speed,
+    double lane_offset,
     const builtin_interfaces::msg::Time& base_time,
     std::size_t sample_index) const {
   perception_msgs::msg::ObjectState state = base_state;
@@ -1014,7 +1037,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
     }
 
     const double arc_length = std::clamp(distance_on_route, 0.0, lanelet_length);
-    const lanelet::BasicPoint2d point = lanelet::geometry::interpolatedPointAtDistance(centerline, arc_length);
+    lanelet::BasicPoint2d point = lanelet::geometry::interpolatedPointAtDistance(centerline, arc_length);
     const double yaw_sample_distance = std::min(0.5, std::max(0.01, lanelet_length * 0.1));
     double before_arc_length = std::max(0.0, arc_length - yaw_sample_distance);
     double after_arc_length = std::min(lanelet_length, arc_length + yaw_sample_distance);
@@ -1026,6 +1049,10 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
     const lanelet::BasicPoint2d before_point = lanelet::geometry::interpolatedPointAtDistance(centerline, before_arc_length);
     const lanelet::BasicPoint2d after_point = lanelet::geometry::interpolatedPointAtDistance(centerline, after_arc_length);
     const double yaw = std::atan2(after_point.y() - before_point.y(), after_point.x() - before_point.x());
+    if (lane_offset != 0.0) {
+      const double half_width = laneHalfWidth(route[route_index], arc_length, lane_offset > 0.0);
+      point += lane_offset * half_width * lanelet::BasicPoint2d(-std::sin(yaw), std::cos(yaw));
+    }
     geometry_msgs::msg::Vector3 velocity;
     velocity.x = speed * std::cos(yaw);
     velocity.y = speed * std::sin(yaw);

@@ -70,3 +70,11 @@ Instead of all lanelets within `lanelet_match_max_distance_m`, an object is matc
 A nearest lanelet only counts if at least `min_coverage` of the object's footprint lies on it, together with the lanelets connected to it ahead and behind that also lie under the footprint. A vehicle across the joint of two consecutive lanelets therefore counts fully, while a vehicle across the boundary of two neighboring lanes does not. The footprint is the object's box along the tracker's yaw. Objects without a footprint are matched to their nearest lanelets within `lanelet_match_max_distance_m`.
 
 With `enable: false`, objects are matched to all lanelets within `lanelet_match_max_distance_m`.
+
+## Lane offset
+
+With `keep_lane_offset`, predictions keep the object's lateral position in its lane instead of following the centerline. The position is relative to the distance from the centerline to the lane bound on the object's side: 0 on the centerline and ±1 on the left or right bound, limited to the lane. Along the route, every predicted state lies at the same relative position, so it follows changes of the lane width. The position is measured again with every object list, so a prediction returns to the centerline as soon as the object does.
+
+Speeds, curves, yield lines and leaders are still evaluated along the centerline.
+
+With `keep_lane_offset: false`, predictions follow the centerline.

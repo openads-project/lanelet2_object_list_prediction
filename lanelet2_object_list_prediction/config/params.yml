@@ -9,6 +9,7 @@
     infeasible_prediction_probability: 0.0
     max_longitudinal_acceleration_mps2: 1.0     # maximum acceleration for regaining the current speed after slowing down
     max_longitudinal_deceleration_mps2: 3.0     # maximum deceleration for slowing down, e.g. before a curve or a yield line
+    keep_lane_offset: true                      # keep the object's lateral position in its lane, relative to the lane width, instead of predicting it along the centerline
     participant_specific_matching:
       enable: true                              # match and route pedestrians and two-wheelers with their own traffic rules, preferring bicycle lanes for two-wheelers
       allow_opposite_direction: true            # predict two-wheelers without a legal lanelet match against a lanelet's direction
