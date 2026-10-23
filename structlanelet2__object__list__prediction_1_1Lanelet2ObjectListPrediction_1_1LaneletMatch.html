@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">lanelet2_object_list_prediction<span id="projectnumber">&#160;v1.0.3</span>
+   <div id="projectname">lanelet2_object_list_prediction<span id="projectnumber">&#160;v2.0.0</span>
    </div>
   </td>
  </tr>
@@ -121,11 +121,17 @@ Public Attributes</h2></td></tr>
 <tr class="memitem:aa5bafd9f8440ee43f163d6c4f85b2275" id="r_aa5bafd9f8440ee43f163d6c4f85b2275"><td class="memItemLeft" align="right" valign="top">double&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aa5bafd9f8440ee43f163d6c4f85b2275">orientation_difference</a></td></tr>
 <tr class="memdesc:aa5bafd9f8440ee43f163d6c4f85b2275"><td class="mdescLeft">&#160;</td><td class="mdescRight">Absolute yaw difference between object heading and lanelet direction in radians.  <br /></td></tr>
 <tr class="separator:aa5bafd9f8440ee43f163d6c4f85b2275"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aad33bdcc8ee76abc3c8fb242f4765ece" id="r_aad33bdcc8ee76abc3c8fb242f4765ece"><td class="memItemLeft" align="right" valign="top">const lanelet::routing::RoutingGraph *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aad33bdcc8ee76abc3c8fb242f4765ece">routing_graph</a></td></tr>
+<tr class="memdesc:aad33bdcc8ee76abc3c8fb242f4765ece"><td class="mdescLeft">&#160;</td><td class="mdescRight">Routing graph of the participant type matched to the lanelet.  <br /></td></tr>
+<tr class="separator:aad33bdcc8ee76abc3c8fb242f4765ece"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:abdc413de2fbd24cbebe638f3c327dcac" id="r_abdc413de2fbd24cbebe638f3c327dcac"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#abdc413de2fbd24cbebe638f3c327dcac">opposite_direction</a></td></tr>
+<tr class="memdesc:abdc413de2fbd24cbebe638f3c327dcac"><td class="mdescLeft">&#160;</td><td class="mdescRight">Whether the lanelet is used against its legal direction, routing along its predecessors.  <br /></td></tr>
+<tr class="separator:abdc413de2fbd24cbebe638f3c327dcac"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>Lanelet match candidate for one perceived object. </p>
 
-<p class="definition">Definition at line <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html#l00043">43</a> of file <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html">lanelet2_object_list_prediction.hpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html#l00064">64</a> of file <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html">lanelet2_object_list_prediction.hpp</a>.</p>
 </div><h2 class="groupheader">Member Data Documentation</h2>
 <a id="af8dd1eb9eb39e98f94ed28753bf72c1a" name="af8dd1eb9eb39e98f94ed28753bf72c1a"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#af8dd1eb9eb39e98f94ed28753bf72c1a">&#9670;&#160;</a></span>distance</h2>
@@ -141,7 +147,7 @@ Public Attributes</h2></td></tr>
 
 <p>Lateral distance from object position to lanelet geometry in meters. </p>
 
-<p class="definition">Definition at line <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html#l00045">45</a> of file <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html">lanelet2_object_list_prediction.hpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html#l00066">66</a> of file <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html">lanelet2_object_list_prediction.hpp</a>.</p>
 
 </div>
 </div>
@@ -159,7 +165,25 @@ Public Attributes</h2></td></tr>
 
 <p>Matched lanelet in the direction used for routing. </p>
 
-<p class="definition">Definition at line <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html#l00044">44</a> of file <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html">lanelet2_object_list_prediction.hpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html#l00065">65</a> of file <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html">lanelet2_object_list_prediction.hpp</a>.</p>
+
+</div>
+</div>
+<a id="abdc413de2fbd24cbebe638f3c327dcac" name="abdc413de2fbd24cbebe638f3c327dcac"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abdc413de2fbd24cbebe638f3c327dcac">&#9670;&#160;</a></span>opposite_direction</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool lanelet2_object_list_prediction::Lanelet2ObjectListPrediction::LaneletMatch::opposite_direction</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Whether the lanelet is used against its legal direction, routing along its predecessors. </p>
+
+<p class="definition">Definition at line <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html#l00070">70</a> of file <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html">lanelet2_object_list_prediction.hpp</a>.</p>
 
 </div>
 </div>
@@ -177,7 +201,25 @@ Public Attributes</h2></td></tr>
 
 <p>Absolute yaw difference between object heading and lanelet direction in radians. </p>
 
-<p class="definition">Definition at line <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html#l00047">47</a> of file <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html">lanelet2_object_list_prediction.hpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html#l00068">68</a> of file <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html">lanelet2_object_list_prediction.hpp</a>.</p>
+
+</div>
+</div>
+<a id="aad33bdcc8ee76abc3c8fb242f4765ece" name="aad33bdcc8ee76abc3c8fb242f4765ece"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aad33bdcc8ee76abc3c8fb242f4765ece">&#9670;&#160;</a></span>routing_graph</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">const lanelet::routing::RoutingGraph* lanelet2_object_list_prediction::Lanelet2ObjectListPrediction::LaneletMatch::routing_graph</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Routing graph of the participant type matched to the lanelet. </p>
+
+<p class="definition">Definition at line <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html#l00069">69</a> of file <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html">lanelet2_object_list_prediction.hpp</a>.</p>
 
 </div>
 </div>
@@ -195,7 +237,7 @@ Public Attributes</h2></td></tr>
 
 <p>Arc length of the projected object position along the matched centerline. </p>
 
-<p class="definition">Definition at line <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html#l00046">46</a> of file <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html">lanelet2_object_list_prediction.hpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html#l00067">67</a> of file <a class="el" href="lanelet2__object__list__prediction_8hpp_source.html">lanelet2_object_list_prediction.hpp</a>.</p>
 
 </div>
 </div>

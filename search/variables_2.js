@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['is_5fvector_5fv_0',['is_vector_v',['../namespacelanelet2__object__list__prediction.html#ad09415b83b7887ccc88d21d7b3e211f8',1,'lanelet2_object_list_prediction']]]
+  ['distance_0',['distance',['../structlanelet2__object__list__prediction_1_1Lanelet2ObjectListPrediction_1_1LaneletMatch.html#af8dd1eb9eb39e98f94ed28753bf72c1a',1,'lanelet2_object_list_prediction::Lanelet2ObjectListPrediction::LaneletMatch']]]
 ];
