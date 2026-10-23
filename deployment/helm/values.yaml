@@ -1,6 +1,6 @@
 openadservice:
   name: lanelet2-object-list-prediction
-  image: ghcr.io/openads-project/lanelet2_object_list_prediction:v1.0.3
+  image: ghcr.io/openads-project/lanelet2_object_list_prediction:v2.0.0
   env:
     # --- name ------
     NAMESPACE: /
