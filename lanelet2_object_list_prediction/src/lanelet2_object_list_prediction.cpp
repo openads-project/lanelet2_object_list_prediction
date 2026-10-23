@@ -6,6 +6,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <set>
 #include <tuple>
 #include <utility>
 
@@ -19,6 +20,7 @@
 #include <lanelet2_routing/RoutingGraph.h>
 #include <lanelet2_traffic_rules/TrafficRulesFactory.h>
 #include <tf2/exceptions.h>
+#include <boost/geometry.hpp>
 #include <lanelet2_object_list_prediction/lanelet2_object_list_prediction.hpp>
 #include <lanelet2_object_list_prediction/utils.hpp>
 #include <perception_msgs_utils/object_access.hpp>
@@ -282,6 +284,57 @@ std::vector<std::pair<double, double>> closestLeaderAlongRoute(const lanelet::ro
   return any_leader ? closest : std::vector<std::pair<double, double>>{};
 }
 
+// Distance from a lanelet's centerline to its left or right bound at an arc length
+double laneHalfWidth(const lanelet::ConstLanelet& lanelet, double arc_length, bool left) {
+  const lanelet::BasicPoint2d center = lanelet::geometry::interpolatedPointAtDistance(lanelet.centerline2d(), arc_length);
+  return lanelet::geometry::distance2d(center, left ? lanelet.leftBound2d() : lanelet.rightBound2d());
+}
+
+// Lateral position of a point in a lanelet, relative to the distance from the centerline to the bound on its side:
+// 0 on the centerline, 1 on the left bound and -1 on the right bound
+double relativeLaneOffset(const lanelet::ConstLanelet& lanelet, const lanelet::BasicPoint2d& point) {
+  const lanelet::ArcCoordinates arc = lanelet::geometry::toArcCoordinates(lanelet.centerline2d(), point);
+  const double half_width = laneHalfWidth(lanelet, std::max(0.0, arc.length), arc.distance > 0.0);
+  return half_width > 0.0 ? std::clamp(arc.distance / half_width, -1.0, 1.0) : 0.0;
+}
+
+using BoostPolygon = boost::geometry::model::polygon<lanelet::BasicPoint2d>;
+using BoostMultiPolygon = boost::geometry::model::multi_polygon<BoostPolygon>;
+
+// Share of a objects area covered by a lanelet and the lanelets connected to it ahead and behindlocaloc, so that
+// a footprint across lanelet joints counts fully, while neighboring lanes stay separate
+double laneSequenceCoverage(const BoostPolygon& footprint,
+                            const lanelet::ConstLanelet& lanelet,
+                            const lanelet::routing::RoutingGraph& graph) {
+  const auto overlap_with = [&footprint](const lanelet::ConstLanelet& other) {
+    BoostPolygon area;
+    for (const auto& point : other.polygon2d().basicPolygon()) area.outer().push_back(point);
+    boost::geometry::correct(area);
+    BoostMultiPolygon overlap;
+    boost::geometry::intersection(footprint, area, overlap);
+    return overlap;
+  };
+  BoostMultiPolygon covered = overlap_with(lanelet);
+  for (const bool ahead : {true, false}) {
+    std::vector<lanelet::ConstLanelet> open = {lanelet};
+    std::set<lanelet::Id> visited = {lanelet.id()};
+    while (!open.empty()) {
+      const lanelet::ConstLanelet current = open.back();
+      open.pop_back();
+      for (const auto& next : ahead ? graph.following(current, false) : graph.previous(current, false)) {
+        if (!visited.insert(next.id()).second) continue;
+        const BoostMultiPolygon overlap = overlap_with(next);
+        if (boost::geometry::area(overlap) <= 0.0) continue;  // the sequence ends where it leaves the footprint
+        BoostMultiPolygon merged;
+        boost::geometry::union_(covered, overlap, merged);
+        covered = merged;
+        open.push_back(next);
+      }
+    }
+  }
+  return boost::geometry::area(covered) / boost::geometry::area(footprint);
+}
+
 }  // namespace
 
 Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_object_list_prediction") {
@@ -313,6 +366,9 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
       "max_longitudinal_deceleration_mps2", max_longitudinal_deceleration_mps2_,
       "Maximum longitudinal deceleration in m/s^2 of predicted objects slowing down, e.g. before a curve or a yield line", true,
       false, false, 0.1, 20.0, 0.1);
+  this->declareAndLoadParameter("keep_lane_offset", keep_lane_offset_,
+                                "Keep the object's lateral position in its lane, relative to the lane width, instead of "
+                                "predicting it along the centerline");
   this->declareAndLoadParameter("participant_specific_matching.enable", participant_specific_matching_enable_,
                                 "Match and route pedestrians and two-wheelers with their own traffic rules, preferring "
                                 "bicycle lanes for two-wheelers");
@@ -332,6 +388,12 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
   this->declareAndLoadParameter("following.min_distance_m", following_min_distance_m_,
                                 "Minimum distance in meters that objects keep to the rear of their leader", true, false, false,
                                 0.0, 50.0, 0.1);
+  this->declareAndLoadParameter("lane_coverage_matching.enable", lane_coverage_matching_enable_,
+                                "Match objects to their nearest lanelets if enough of their footprint lies on the lanelet "
+                                "sequence of it, instead of to all lanelets within lanelet_match_max_distance_m");
+  this->declareAndLoadParameter("lane_coverage_matching.min_coverage", lane_coverage_matching_min_coverage_,
+                                "Minimum share of the object's footprint on the lanelet and its predecessors and successors",
+                                true, false, false, 0.0, 1.0, 0.01);
   this->setup();
 }
 
@@ -572,8 +634,33 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
     }
 
     const lanelet::BasicPoint2d position_2d(position.x, position.y);
-    const auto candidate_lanelets =
-        lanelet::geometry::findWithin2d(map->laneletLayer, position_2d, lanelet_match_max_distance_m_);
+
+    // Footprint of the object along the tracker's yaw
+    BoostPolygon footprint;
+    double search_distance = lanelet_match_max_distance_m_;
+    if (lane_coverage_matching_enable_) {
+      try {
+        const double length = perception_msgs::object_access::getLength(prediction_object.object);
+        const double width = perception_msgs::object_access::getWidth(prediction_object.object);
+        const double yaw = perception_msgs::object_access::getYaw(prediction_object.object);
+        const auto& offset = prediction_object.object.state.reference_point.translation_to_geometric_center;
+        const lanelet::BasicPoint2d forward(std::cos(yaw), std::sin(yaw));
+        const lanelet::BasicPoint2d left(-std::sin(yaw), std::cos(yaw));
+        const lanelet::BasicPoint2d center = position_2d + offset.x * forward + offset.y * left;
+        for (const auto& [f, l] : {std::pair{0.5, 0.5}, {0.5, -0.5}, {-0.5, -0.5}, {-0.5, 0.5}}) {
+          footprint.outer().push_back(center + f * length * forward + l * width * left);
+        }
+        boost::geometry::correct(footprint);
+        if (boost::geometry::area(footprint) > 0.0) {
+          search_distance = 0.5 * std::hypot(length, width) + std::hypot(offset.x, offset.y);
+        } else {
+          footprint.clear();
+        }
+      } catch (const std::exception& ex) {
+        RCLCPP_DEBUG(this->get_logger(), "Could not read the footprint of object %zu: %s", object_index, ex.what());
+      }
+    }
+    const auto candidate_lanelets = lanelet::geometry::findWithin2d(map->laneletLayer, position_2d, search_distance);
 
     for (const auto& candidate_lanelet : candidate_lanelets) {
       lanelet::ConstLanelet lanelet = candidate_lanelet.second;
@@ -631,6 +718,22 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
       const int best_rank = rank(*std::min_element(
           matches.begin(), matches.end(), [&](const LaneletMatch& a, const LaneletMatch& b) { return rank(a) < rank(b); }));
       matches.erase(std::remove_if(matches.begin(), matches.end(), [&](const auto& match) { return rank(match) > best_rank; }),
+                    matches.end());
+    }
+
+    // With footprint matching, the nearest matches count (several where lanelets overlap), if enough of
+    // the footprint lies on their lanelet sequence
+    if (lane_coverage_matching_enable_ && !matches.empty()) {
+      const double nearest = std::min_element(matches.begin(), matches.end(), [](const auto& a, const auto& b) {
+                               return a.distance < b.distance;
+                             })->distance;
+      matches.erase(std::remove_if(matches.begin(), matches.end(),
+                                   [&](const LaneletMatch& match) {
+                                     return match.distance > nearest ||
+                                            (!footprint.outer().empty() &&
+                                             laneSequenceCoverage(footprint, match.lanelet, *match.routing_graph) <
+                                                 lane_coverage_matching_min_coverage_);
+                                   }),
                     matches.end());
     }
 
@@ -775,6 +878,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
   }
   const std::size_t sample_count = getPredictionSampleCount();
   const double max_travel_distance = speed * prediction_sample_interval_s_ * static_cast<double>(sample_count);
+  const geometry_msgs::msg::Point position = perception_msgs::object_access::getPosition(prediction_object.object);
 
   // Routes of all other objects, which have right of way where they pass a right-of-way lanelet
   std::vector<lanelet::routing::LaneletPath> priority_routes;
@@ -812,12 +916,16 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
       }
     }
 
+    // The object keeps its lateral position in the lane relative to the lane width, or follows the centerline
+    const double lane_offset =
+        keep_lane_offset_ ? relativeLaneOffset(match.lanelet, lanelet::BasicPoint2d(position.x, position.y)) : 0.0;
+
     perception_msgs::msg::ObjectStatePrediction prediction;
     prediction.states.reserve(sample_count);
     for (std::size_t sample_index = 0; sample_index < sample_count; ++sample_index) {
       prediction.states.push_back(sampleStateOnLaneletRoute(prediction_object.object.state, lanelet_route, match.start_arc_length,
-                                                            motion[sample_index].first, motion[sample_index].second, base_time,
-                                                            sample_index));
+                                                            motion[sample_index].first, motion[sample_index].second, lane_offset,
+                                                            base_time, sample_index));
     }
     prediction.probability = feasible ? 1.0 : 0.0;  // marks feasibility until the probabilities are assigned below
     predictions.push_back(prediction);
@@ -895,6 +1003,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
     double start_arc_length,
     double travel_distance,
     double speed,
+    double lane_offset,
     const builtin_interfaces::msg::Time& base_time,
     std::size_t sample_index) const {
   perception_msgs::msg::ObjectState state = base_state;
@@ -928,7 +1037,7 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
     }
 
     const double arc_length = std::clamp(distance_on_route, 0.0, lanelet_length);
-    const lanelet::BasicPoint2d point = lanelet::geometry::interpolatedPointAtDistance(centerline, arc_length);
+    lanelet::BasicPoint2d point = lanelet::geometry::interpolatedPointAtDistance(centerline, arc_length);
     const double yaw_sample_distance = std::min(0.5, std::max(0.01, lanelet_length * 0.1));
     double before_arc_length = std::max(0.0, arc_length - yaw_sample_distance);
     double after_arc_length = std::min(lanelet_length, arc_length + yaw_sample_distance);
@@ -940,6 +1049,10 @@ perception_msgs::msg::ObjectState Lanelet2ObjectListPrediction::sampleStateOnLan
     const lanelet::BasicPoint2d before_point = lanelet::geometry::interpolatedPointAtDistance(centerline, before_arc_length);
     const lanelet::BasicPoint2d after_point = lanelet::geometry::interpolatedPointAtDistance(centerline, after_arc_length);
     const double yaw = std::atan2(after_point.y() - before_point.y(), after_point.x() - before_point.x());
+    if (lane_offset != 0.0) {
+      const double half_width = laneHalfWidth(route[route_index], arc_length, lane_offset > 0.0);
+      point += lane_offset * half_width * lanelet::BasicPoint2d(-std::sin(yaw), std::cos(yaw));
+    }
     geometry_msgs::msg::Vector3 velocity;
     velocity.x = speed * std::cos(yaw);
     velocity.y = speed * std::sin(yaw);

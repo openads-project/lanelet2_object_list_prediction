@@ -49,6 +49,7 @@ flowchart LR
 | `infeasible_prediction_probability` | `float` | `0.0` | Probability of each prediction that cannot be followed within the motion limits; with 0.0, they are not published |
 | `max_longitudinal_acceleration_mps2` | `float` | `1.0` | Maximum longitudinal acceleration in m/s^2 of predicted objects regaining their current speed after slowing down, e.g. after a curve; predictions never exceed the current speed |
 | `max_longitudinal_deceleration_mps2` | `float` | `3.0` | Maximum longitudinal deceleration in m/s^2 of predicted objects slowing down, e.g. before a curve or a yield line |
+| `keep_lane_offset` | `bool` | `true` | Keep the object's lateral position in its lane, relative to the lane width, instead of predicting it along the centerline |
 | `participant_specific_matching.enable` | `bool` | `true` | Match and route pedestrians and two-wheelers with their own traffic rules, preferring bicycle lanes for two-wheelers |
 | `participant_specific_matching.allow_opposite_direction` | `bool` | `true` | Predict two-wheelers without a legal lanelet match against a lanelet's direction |
 | `motion_limits.enable` | `bool` | `true` | Reduce the predicted speed in curves to respect the lateral and longitudinal acceleration limits |
@@ -56,6 +57,8 @@ flowchart LR
 | `yielding.enable` | `bool` | `true` | Stop objects at yield lines for conflicting priority traffic, i.e. other objects and ego |
 | `following.enable` | `bool` | `true` | Slow objects down behind leaders ahead on their routes, i.e. other objects and ego |
 | `following.min_distance_m` | `float` | `2.0` | Minimum distance in meters that objects keep to the rear of their leader |
+| `lane_coverage_matching.enable` | `bool` | `true` | Match objects to their nearest lanelets if enough of their footprint lies on the lanelet sequence of it, instead of to all lanelets within lanelet_match_max_distance_m |
+| `lane_coverage_matching.min_coverage` | `float` | `0.55` | Minimum share of the object's footprint on the lanelet and its predecessors and successors |
 
 ## Launch Files
 
