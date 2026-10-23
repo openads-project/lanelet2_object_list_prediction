@@ -338,6 +338,16 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   double lanelet_match_max_yaw_diff_rad_ = 1.57079632679;
 
   /**
+   * @brief Whether moving objects are matched by their direction of motion instead of their yaw (parameter)
+   */
+  bool motion_direction_matching_enable_ = true;
+
+  /**
+   * @brief Minimum speed in m/s for matching an object by its direction of motion (parameter)
+   */
+  double motion_direction_matching_min_speed_mps_ = 0.5;
+
+  /**
    * @brief Prediction horizon in seconds (parameter)
    */
   double prediction_horizon_s_ = 5.0;

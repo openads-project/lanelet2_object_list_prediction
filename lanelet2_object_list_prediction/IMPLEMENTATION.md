@@ -62,3 +62,11 @@ Behind a leader, the speed is limited so that braking with at most `max_longitud
 A path is infeasible if its object runs into a leader despite braking, e.g. when approaching too fast. Getting closer than `min_distance_m`, e.g. when a leader cuts in, keeps the path feasible, as the object still brakes behind the leader. As for curves, see [Motion limits](#motion-limits), an infeasible path gets `infeasible_prediction_probability`, and without any feasible path the object gets the fallback prediction.
 
 With `enable: false`, objects do not follow.
+
+## Motion direction matching
+
+Trackers sometimes flip an object's yaw by 180 degrees together with the sign of its longitudinal velocity, so the object seems to move backwards. Its velocity still points the way it moves. Objects at `min_speed_mps` or faster are therefore matched by the direction of their velocity instead of their yaw: it selects the lanelet direction to predict along and must lie within `lanelet_match_max_yaw_diff_rad` of it. Slower objects keep their yaw, as the direction of a small velocity is mostly noise.
+
+When the tracker flips the yaw but keeps the sign of the longitudinal velocity, the velocity points the wrong way as well, and the object is still matched against its direction of motion. This mostly happens to new tracks.
+
+With `enable: false`, all objects are matched by their yaw.

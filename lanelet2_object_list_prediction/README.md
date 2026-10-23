@@ -56,6 +56,8 @@ flowchart LR
 | `yielding.enable` | `bool` | `true` | Stop objects at yield lines for conflicting priority traffic, i.e. other objects and ego |
 | `following.enable` | `bool` | `true` | Slow objects down behind leaders ahead on their routes, i.e. other objects and ego |
 | `following.min_distance_m` | `float` | `2.0` | Minimum distance in meters that objects keep to the rear of their leader |
+| `motion_direction_matching.enable` | `bool` | `true` | Match moving objects by the direction of their velocity instead of their yaw, which trackers sometimes flip by 180 degrees |
+| `motion_direction_matching.min_speed_mps` | `float` | `0.5` | Minimum speed in m/s for matching an object by the direction of its velocity |
 
 ## Launch Files
 

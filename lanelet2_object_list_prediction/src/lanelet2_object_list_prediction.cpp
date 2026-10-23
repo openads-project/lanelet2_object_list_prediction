@@ -293,6 +293,12 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
   this->declareAndLoadParameter("lanelet_match_max_yaw_diff_rad", lanelet_match_max_yaw_diff_rad_,
                                 "Maximum yaw difference in radians for accepting a lanelet match", true, false, false, 0.0,
                                 3.14159265359);
+  this->declareAndLoadParameter("motion_direction_matching.enable", motion_direction_matching_enable_,
+                                "Match moving objects by the direction of their velocity instead of their yaw, which "
+                                "trackers sometimes flip by 180 degrees");
+  this->declareAndLoadParameter("motion_direction_matching.min_speed_mps", motion_direction_matching_min_speed_mps_,
+                                "Minimum speed in m/s for matching an object by the direction of its velocity", true, false,
+                                false, 0.0, 10.0, 0.1);
   this->declareAndLoadParameter("prediction_horizon_s", prediction_horizon_s_, "Prediction horizon in seconds", true, false,
                                 false, 0.1, 60.0, 0.1);
   this->declareAndLoadParameter("prediction_sample_interval_s", prediction_sample_interval_s_,
@@ -565,6 +571,13 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
     try {
       position = perception_msgs::object_access::getPosition(prediction_object.object);
       object_yaw = perception_msgs::object_access::getYaw(prediction_object.object);
+      // The direction of motion stays right when the tracker flips the yaw together with the longitudinal velocity
+      if (motion_direction_matching_enable_) {
+        const geometry_msgs::msg::Vector3 velocity = perception_msgs::object_access::getVelocityXYZ(prediction_object.object);
+        if (std::hypot(velocity.x, velocity.y) >= motion_direction_matching_min_speed_mps_) {
+          object_yaw = std::atan2(velocity.y, velocity.x);
+        }
+      }
     } catch (const std::exception& ex) {
       RCLCPP_WARN(this->get_logger(), "Could not read position or yaw of object %zu: %s", object_index, ex.what());
       prediction_objects.push_back(prediction_object);

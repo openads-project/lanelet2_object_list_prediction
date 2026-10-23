@@ -20,3 +20,6 @@
     following:
       enable: true                              # slow objects down behind leaders ahead on their routes, i.e. other objects and ego
       min_distance_m: 2.0                       # minimum distance that objects keep to the rear of their leader
+    motion_direction_matching:
+      enable: true                              # match moving objects by the direction of their velocity instead of their yaw, which trackers sometimes flip by 180 degrees
+      min_speed_mps: 0.5                        # minimum speed for matching by the direction of the velocity
