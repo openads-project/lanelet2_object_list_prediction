@@ -17,3 +17,6 @@
       max_lateral_acceleration_mps2: 3.0        # maximum lateral acceleration of predicted objects in curves
     yielding:
       enable: true                              # stop objects at yield lines for conflicting priority traffic
+    following:
+      enable: true                              # slow objects down behind leaders ahead on their routes, i.e. other objects and ego
+      min_distance_m: 2.0                       # minimum distance that objects keep to the rear of their leader

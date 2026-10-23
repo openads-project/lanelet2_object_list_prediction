@@ -50,3 +50,15 @@ Priority lanelets are the rule's right-of-way lanelets and the lanelets directly
 The object brakes with at most `max_longitudinal_deceleration_mps2`. If it cannot stop in time, the path is infeasible, see [Motion limits](#motion-limits).
 
 With `enable: false`, objects do not yield.
+
+## Following
+
+Following is evaluated after yielding, in a single pass. All objects first get their nominal predictions, including yielding. Each object then slows down behind the nominal predictions of the other objects and behind ego's planned trajectory from `~/ego_data`. As followers react to nominal predictions only, slowing down does not propagate to further followers.
+
+Each prediction of another object is a possible leader, and so is ego. Ego's planned trajectory is used rather than its route, as following needs ego's motion over time. At each prediction time, ego is at the first trajectory point at or after it, while the trajectory covers it, in the map frame. A leader is on a route while it is inside one of the route's lanelets and its yaw differs from the lanelet's by at most `lanelet_match_max_yaw_diff_rad`, as for matching objects to lanelets, so crossing and oncoming traffic is not followed. It must start ahead of the follower's front, so traffic behind or beside the follower is not followed either. Per route, the closest leader counts.
+
+Behind a leader, the speed is limited so that braking with at most `max_longitudinal_deceleration_mps2` reaches the leader's speed `min_distance_m` behind its rear, assuming the leader keeps its speed. When the leader leaves the route or speeds up, the follower regains its current speed with at most `max_longitudinal_acceleration_mps2`. Without a leader on a route, the prediction does not change.
+
+A path is infeasible if its object runs into a leader despite braking, e.g. when approaching too fast. Getting closer than `min_distance_m`, e.g. when a leader cuts in, keeps the path feasible, as the object still brakes behind the leader. As for curves, see [Motion limits](#motion-limits), an infeasible path gets `infeasible_prediction_probability`, and without any feasible path the object gets the fallback prediction.
+
+With `enable: false`, objects do not follow.

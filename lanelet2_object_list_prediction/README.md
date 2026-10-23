@@ -17,6 +17,7 @@ flowchart LR
     NODE("lanelet2_object_list_prediction")
     S0:::hidden -->|~/tracked_object_list| NODE
     S1:::hidden -->|~/route| NODE
+    S2:::hidden -->|~/ego_data| NODE
     NODE -->|~/object_list| P0:::hidden
     classDef hidden display: none;
 ```
@@ -27,6 +28,7 @@ flowchart LR
 | --- | --- | --- |
 | `~/tracked_object_list` | `perception_msgs/msg/ObjectList` | Objects in any TF-reachable frame |
 | `~/route` | `route_planning_msgs/msg/Route` | Planned route of ego in map frame, which has right of way for yielding |
+| `~/ego_data` | `perception_msgs/msg/EgoData` | Ego data in map frame, whose planned trajectory objects behind ego follow |
 
 #### Published Topics
 
@@ -52,6 +54,8 @@ flowchart LR
 | `motion_limits.enable` | `bool` | `true` | Reduce the predicted speed in curves to respect the lateral and longitudinal acceleration limits |
 | `motion_limits.max_lateral_acceleration_mps2` | `float` | `3.0` | Maximum lateral acceleration in m/s^2 of predicted objects in curves |
 | `yielding.enable` | `bool` | `true` | Stop objects at yield lines for conflicting priority traffic, i.e. other objects and ego |
+| `following.enable` | `bool` | `true` | Slow objects down behind leaders ahead on their routes, i.e. other objects and ego |
+| `following.min_distance_m` | `float` | `2.0` | Minimum distance in meters that objects keep to the rear of their leader |
 
 ## Launch Files
 
@@ -61,6 +65,7 @@ flowchart LR
 | --- | --- | --- |
 | `tracked_object_list_topic` | `"~/tracked_object_list"` | Topic to subscribe for incoming objects |
 | `route_topic` | `"~/route"` | Topic to subscribe for the route of ego |
+| `ego_data_topic` | `"~/ego_data"` | Topic to subscribe for ego data |
 | `object_list_topic` | `"~/object_list"` | Topic to publish objects with predictions |
 | `name` | `"lanelet2_object_list_prediction"` | node name |
 | `namespace` | `""` | node namespace |

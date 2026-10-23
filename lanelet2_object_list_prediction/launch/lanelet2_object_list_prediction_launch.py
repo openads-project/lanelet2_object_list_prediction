@@ -20,6 +20,7 @@ def generate_launch_description():
     remappable_topics = [
         DeclareLaunchArgument("tracked_object_list_topic", default_value="~/tracked_object_list"),
         DeclareLaunchArgument("route_topic", default_value="~/route"),
+        DeclareLaunchArgument("ego_data_topic", default_value="~/ego_data"),
         DeclareLaunchArgument("object_list_topic", default_value="~/object_list"),
     ]
 
