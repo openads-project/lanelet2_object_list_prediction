@@ -338,6 +338,17 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   double lanelet_match_max_yaw_diff_rad_ = 1.57079632679;
 
   /**
+  /**
+   * @brief Whether objects are matched to their nearest lanelets by the share of their footprint on them (parameter)
+   */
+  bool lane_coverage_matching_enable_ = true;
+
+  /**
+   * @brief Minimum share of the footprint on the nearest lanelet and its predecessors and successors (parameter)
+   */
+  double lane_coverage_matching_min_coverage_ = 0.55;
+
+  /**
    * @brief Prediction horizon in seconds (parameter)
    */
   double prediction_horizon_s_ = 5.0;

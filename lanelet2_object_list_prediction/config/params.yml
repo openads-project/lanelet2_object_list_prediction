@@ -20,3 +20,6 @@
     following:
       enable: true                              # slow objects down behind leaders ahead on their routes, i.e. other objects and ego
       min_distance_m: 2.0                       # minimum distance that objects keep to the rear of their leader
+    lane_coverage_matching:
+      enable: true                              # match objects to their nearest lanelets if enough of their area lies on the lanelet sequence of it
+      min_coverage: 0.55                        # minimum share of the footprint on the lanelet and its predecessors and successors

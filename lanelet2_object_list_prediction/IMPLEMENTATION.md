@@ -62,3 +62,11 @@ Behind a leader, the speed is limited so that braking with at most `max_longitud
 A path is infeasible if its object runs into a leader despite braking, e.g. when approaching too fast. Getting closer than `min_distance_m`, e.g. when a leader cuts in, keeps the path feasible, as the object still brakes behind the leader. As for curves, see [Motion limits](#motion-limits), an infeasible path gets `infeasible_prediction_probability`, and without any feasible path the object gets the fallback prediction.
 
 With `enable: false`, objects do not follow.
+
+## Lane coverage matching
+
+Instead of all lanelets within `lanelet_match_max_distance_m`, an object is matched to its nearest lanelets that pass the direction and traffic rule checks. Usually this is the lanelet its position lies on, and several where lanelets overlap, e.g. in junctions.
+
+A nearest lanelet only counts if at least `min_coverage` of the object's footprint lies on it, together with the lanelets connected to it ahead and behind that also lie under the footprint. A vehicle across the joint of two consecutive lanelets therefore counts fully, while a vehicle across the boundary of two neighboring lanes does not. The footprint is the object's box along the tracker's yaw. Objects without a footprint are matched to their nearest lanelets within `lanelet_match_max_distance_m`.
+
+With `enable: false`, objects are matched to all lanelets within `lanelet_match_max_distance_m`.

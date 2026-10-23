@@ -56,6 +56,8 @@ flowchart LR
 | `yielding.enable` | `bool` | `true` | Stop objects at yield lines for conflicting priority traffic, i.e. other objects and ego |
 | `following.enable` | `bool` | `true` | Slow objects down behind leaders ahead on their routes, i.e. other objects and ego |
 | `following.min_distance_m` | `float` | `2.0` | Minimum distance in meters that objects keep to the rear of their leader |
+| `lane_coverage_matching.enable` | `bool` | `true` | Match objects to their nearest lanelets if enough of their area lies on the lanelet sequence of it, instead of to all lanelets within lanelet_match_max_distance_m |
+| `lane_coverage_matching.min_coverage` | `float` | `0.55` | Minimum share of the object's area on the lanelet and its predecessors and successors |
 
 ## Launch Files
 
