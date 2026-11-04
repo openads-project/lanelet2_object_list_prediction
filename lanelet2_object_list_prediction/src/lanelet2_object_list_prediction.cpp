@@ -21,11 +21,22 @@
 #include <lanelet2_traffic_rules/TrafficRulesFactory.h>
 #include <tf2/exceptions.h>
 #include <boost/geometry.hpp>
+#include <boost/geometry/geometries/register/point.hpp>
 #include <lanelet2_object_list_prediction/lanelet2_object_list_prediction.hpp>
 #include <lanelet2_object_list_prediction/utils.hpp>
 #include <perception_msgs_utils/object_access.hpp>
 #include <tf2/time.hpp>
 #include <tf2_perception_msgs/tf2_perception_msgs.hpp>
+
+namespace lanelet2_object_list_prediction {
+// Point for Boost.Geometry polygon overlays, which default-construct points internally: unlike lanelet's Eigen points,
+// it is initialized then
+struct OverlayPoint {
+  double x = 0.0;
+  double y = 0.0;
+};
+}  // namespace lanelet2_object_list_prediction
+BOOST_GEOMETRY_REGISTER_POINT_2D(lanelet2_object_list_prediction::OverlayPoint, double, boost::geometry::cs::cartesian, x, y)
 
 namespace lanelet2_object_list_prediction {
 
@@ -100,10 +111,10 @@ std::vector<double> curvaturesAlongLanes(const lanelet::LaneletSequence& lanes,
   std::vector<double> curvatures(count);
   for (std::size_t i = 0; i < count; ++i) curvatures[i] = (median_headings[i + 2] - median_headings[i]) / 2.0;
 
-  // 4. To account for realistic driving behavior it is assumed that drivers take a curve flatter than the centerline, 
-  //    from its outer side to the inner side and back, as far as the lanes allow. A curve turning by `turn` over `arc` meters 
-  //    of centerline is driven on a circle of radius arc / turn + room / 2 * (1 + cos(turn / 2)) / (1 - cos(turn / 2)) 
-  //    instead of arc / turn, with `room` the narrowest lane width along it minus the object's width. The curvatures of each 
+  // 4. To account for realistic driving behavior it is assumed that drivers take a curve flatter than the centerline,
+  //    from its outer side to the inner side and back, as far as the lanes allow. A curve turning by `turn` over `arc` meters
+  //    of centerline is driven on a circle of radius arc / turn + room / 2 * (1 + cos(turn / 2)) / (1 - cos(turn / 2))
+  //    instead of arc / turn, with `room` the narrowest lane width along it minus the object's width. The curvatures of each
   //    curve shrink by the ratio of both radii.
   const lanelet::BasicLineString2d left = lanes.leftBound2d().basicLineString();
   const lanelet::BasicLineString2d right = lanes.rightBound2d().basicLineString();
@@ -332,17 +343,17 @@ double relativeLaneOffset(const lanelet::ConstLanelet& lanelet, const lanelet::B
   return half_width > 0.0 ? std::clamp(arc.distance / half_width, -1.0, 1.0) : 0.0;
 }
 
-using BoostPolygon = boost::geometry::model::polygon<lanelet::BasicPoint2d>;
+using BoostPolygon = boost::geometry::model::polygon<OverlayPoint>;
 using BoostMultiPolygon = boost::geometry::model::multi_polygon<BoostPolygon>;
 
-// Share of a objects area covered by a lanelet and the lanelets connected to it ahead and behindlocaloc, so that
+// Share of an object's footprint covered by a lanelet and the lanelets connected to it ahead and behind, so that
 // a footprint across lanelet joints counts fully, while neighboring lanes stay separate
 double laneSequenceCoverage(const BoostPolygon& footprint,
                             const lanelet::ConstLanelet& lanelet,
                             const lanelet::routing::RoutingGraph& graph) {
   const auto overlap_with = [&footprint](const lanelet::ConstLanelet& other) {
     BoostPolygon area;
-    for (const auto& point : other.polygon2d().basicPolygon()) area.outer().push_back(point);
+    for (const auto& point : other.polygon2d().basicPolygon()) area.outer().push_back({point.x(), point.y()});
     boost::geometry::correct(area);
     BoostMultiPolygon overlap;
     boost::geometry::intersection(footprint, area, overlap);
@@ -682,7 +693,8 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
         const lanelet::BasicPoint2d left(-std::sin(yaw), std::cos(yaw));
         const lanelet::BasicPoint2d center = position_2d + offset.x * forward + offset.y * left;
         for (const auto& [f, l] : {std::pair{0.5, 0.5}, {0.5, -0.5}, {-0.5, -0.5}, {-0.5, 0.5}}) {
-          footprint.outer().push_back(center + f * length * forward + l * width * left);
+          const lanelet::BasicPoint2d corner = center + f * length * forward + l * width * left;
+          footprint.outer().push_back({corner.x(), corner.y()});
         }
         boost::geometry::correct(footprint);
         if (boost::geometry::area(footprint) > 0.0) {
