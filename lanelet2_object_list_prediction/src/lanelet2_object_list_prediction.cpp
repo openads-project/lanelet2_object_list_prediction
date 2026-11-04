@@ -388,9 +388,9 @@ Lanelet2ObjectListPrediction::Lanelet2ObjectListPrediction() : Node("lanelet2_ob
   this->declareAndLoadParameter("lanelet_match_max_distance_m", lanelet_match_max_distance_m_,
                                 "Maximum distance in meters for matching an object to a lanelet", true, false, false, 0.0, 100.0,
                                 0.1);
-  this->declareAndLoadParameter("lanelet_match_max_yaw_diff_rad", lanelet_match_max_yaw_diff_rad_,
-                                "Maximum yaw difference in radians for accepting a lanelet match", true, false, false, 0.0,
-                                3.14159265359);
+  this->declareAndLoadParameter("lanelet_match_max_yaw_diff_deg", lanelet_match_max_yaw_diff_deg_,
+                                "Maximum yaw difference in degrees for accepting a lanelet match", true, false, false, 0.0, 180.0,
+                                1.0);
   this->declareAndLoadParameter("prediction_horizon_s", prediction_horizon_s_, "Prediction horizon in seconds", true, false,
                                 false, 0.1, 60.0, 0.1);
   this->declareAndLoadParameter("prediction_sample_interval_s", prediction_sample_interval_s_,
@@ -730,7 +730,7 @@ std::vector<Lanelet2ObjectListPrediction::PredictionObject> Lanelet2ObjectListPr
         orientation_difference = lanelet_difference;
       }
 
-      if (orientation_difference > lanelet_match_max_yaw_diff_rad_) {
+      if (orientation_difference > lanelet_match_max_yaw_diff_deg_ * M_PI / 180.0) {
         continue;
       }
 
@@ -945,7 +945,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
     // Closest leader ahead on the route
     const std::vector<std::pair<double, double>> leader =
         closestLeaderAlongRoute(lanelet_route, match.start_arc_length + front_offset, leaders, &prediction_object.object,
-                                sample_count, lanelet_match_max_yaw_diff_rad_);
+                                sample_count, lanelet_match_max_yaw_diff_deg_ * M_PI / 180.0);
 
     // Travel distance and speed at each sample
     bool feasible = true;

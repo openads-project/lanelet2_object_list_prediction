@@ -42,7 +42,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | `ll2_map_server_name` | `string` | `"lanelet2_map_server"` | Name of lanelet2_map_server node |
 | `lanelet_match_max_distance_m` | `float` | `0.5` | Maximum distance in meters for matching an object to a lanelet |
-| `lanelet_match_max_yaw_diff_rad` | `float` | `1.57079632679` | Maximum yaw difference in radians for accepting a lanelet match |
+| `lanelet_match_max_yaw_diff_deg` | `float` | `90.0` | Maximum yaw difference in degrees for accepting a lanelet match |
 | `prediction_horizon_s` | `float` | `5.0` | Prediction horizon in seconds |
 | `prediction_sample_interval_s` | `float` | `0.5` | Sampling interval of predicted states in seconds |
 | `unmatched_object_prediction_mode` | `string` | `"kinematic"` | Prediction mode for objects that are not matched to the map |
