@@ -57,11 +57,18 @@ lanelet::routing::LaneletPaths oppositeDirectionPaths(const lanelet::ConstLanele
 constexpr double kHeadingChordLengthM = 3.0;
 // Removes centerline steps shorter than about kHeadingMedianHalfWidth - kHeadingChordLengthM = 3 m, keeping sustained turns
 constexpr int kHeadingMedianHalfWidth = 6;
+// curvature below which the lanes count as straight between two curves
+constexpr double kStraightCurvature = 0.005;
 
-// Curvature every meter from `start_arc_length` along a line, from the change of its heading. The heading at
-// each meter is the median over ± kHeadingMedianHalfWidth m, as map centerlines have short sideways steps and kinks, which
-// would otherwise look like sharp curves. Turns of any length are kept, as they change the heading.
-std::vector<double> curvaturesAlongLine(const lanelet::CompoundLineString2d& line, double start_arc_length, std::size_t count) {
+// Curvature every meter from `start_arc_length` along the path that an object of `width` takes through lanes, from the
+// change of the centerline heading. The heading at each meter is the median over ± kHeadingMedianHalfWidth m, as map centerlines have
+// short sideways steps and kinks, which would otherwise look like sharp curves. Turns of any length are kept, as they
+// change the heading.
+std::vector<double> curvaturesAlongLanes(const lanelet::LaneletSequence& lanes,
+                                         double start_arc_length,
+                                         double width,
+                                         std::size_t count) {
+  const lanelet::CompoundLineString2d line = lanes.centerline2d();
   const double length = static_cast<double>(lanelet::geometry::length(line));
   const int half_width = kHeadingMedianHalfWidth;
 
@@ -89,16 +96,42 @@ std::vector<double> curvaturesAlongLine(const lanelet::CompoundLineString2d& lin
     median_headings.push_back(window[half_width]);
   }
 
-  // 3. Curvature at each meter, as the change of the median heading per meter from 1 m before to 1 m after it
+  // 3. Signed curvature at each meter, as the change of the median heading per meter from 1 m before to 1 m after it
   std::vector<double> curvatures(count);
-  for (std::size_t i = 0; i < count; ++i) curvatures[i] = std::abs(median_headings[i + 2] - median_headings[i]) / 2.0;
+  for (std::size_t i = 0; i < count; ++i) curvatures[i] = (median_headings[i + 2] - median_headings[i]) / 2.0;
+
+  // 4. To account for realistic driving behavior it is assumed that drivers take a curve flatter than the centerline, 
+  //    from its outer side to the inner side and back, as far as the lanes allow. A curve turning by `turn` over `arc` meters 
+  //    of centerline is driven on a circle of radius arc / turn + room / 2 * (1 + cos(turn / 2)) / (1 - cos(turn / 2)) 
+  //    instead of arc / turn, with `room` the narrowest lane width along it minus the object's width. The curvatures of each 
+  //    curve shrink by the ratio of both radii.
+  const lanelet::BasicLineString2d left = lanes.leftBound2d().basicLineString();
+  const lanelet::BasicLineString2d right = lanes.rightBound2d().basicLineString();
+  for (std::size_t first = 0, last = 0; first < count; first = std::max(last, first + 1)) {
+    double turn = 0.0;
+    double room = std::numeric_limits<double>::infinity();
+    for (last = first;
+         last < count && std::abs(curvatures[last]) > kStraightCurvature && curvatures[last] * curvatures[first] > 0.0; ++last) {
+      const lanelet::BasicPoint2d point =
+          lanelet::geometry::interpolatedPointAtDistance(line, start_arc_length + static_cast<double>(last));
+      turn += std::abs(curvatures[last]);
+      room = std::min(room, boost::geometry::distance(point, left) + boost::geometry::distance(point, right) - width);
+    }
+    if (last == first) continue;
+    const double centerline_radius = static_cast<double>(last - first) / turn;
+    const double cos_half_turn = std::cos(std::min(turn, M_PI) / 2.0);
+    const double driven_radius = centerline_radius + std::max(0.0, room) / 2.0 * (1.0 + cos_half_turn) / (1.0 - cos_half_turn);
+    for (std::size_t i = first; i < last; ++i) curvatures[i] *= centerline_radius / driven_radius;
+  }
+  for (double& curvature : curvatures) curvature = std::abs(curvature);
   return curvatures;
 }
 
 constexpr int kSimulationStepsPerSample = 10;  // steps short enough not to skip the speed limits set every meter
 
 // Travel distance and speed at each sample time along a route. Starting at `speed`, the object brakes with at most
-// `max_deceleration` early enough to pass curves with at most `max_lateral_acceleration`, to stop at `stop_distance`
+// `max_deceleration` early enough to pass curves, cut as far as its `width` allows, with at most
+// `max_lateral_acceleration`, to stop at `stop_distance`
 // and to stay `min_distance` behind its leader, and accelerates with at most `max_acceleration` back towards its initial
 // speed. Also returns whether the initial speed allows braking early enough for curves and the stop, and to not run
 // into the leader. `leader` holds the distance to the leader's rear and the leader's speed, at the start and at each
@@ -106,6 +139,7 @@ constexpr int kSimulationStepsPerSample = 10;  // steps short enough not to skip
 std::pair<bool, std::vector<std::pair<double, double>>> limitedMotionAlongRoute(
     const lanelet::routing::LaneletPath& route,
     double start_arc_length,
+    double width,
     double speed,
     double sample_interval,
     std::size_t sample_count,
@@ -118,8 +152,8 @@ std::pair<bool, std::vector<std::pair<double, double>>> limitedMotionAlongRoute(
   // Speed limit every meter ahead: the curve speed or zero beyond the stop, lowered so that the limits further ahead
   // can be reached by braking
   const auto limit_count = static_cast<std::size_t>(speed * sample_interval * static_cast<double>(sample_count)) + 2;
-  const std::vector<double> curvatures = curvaturesAlongLine(
-      lanelet::LaneletSequence(lanelet::ConstLanelets(route.begin(), route.end())).centerline2d(), start_arc_length, limit_count);
+  const std::vector<double> curvatures = curvaturesAlongLanes(
+      lanelet::LaneletSequence(lanelet::ConstLanelets(route.begin(), route.end())), start_arc_length, width, limit_count);
   std::vector<double> speed_limits(limit_count, speed);
   for (std::size_t i = limit_count; i-- > 0;) {
     speed_limits[i] =
@@ -869,12 +903,14 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
   std::vector<perception_msgs::msg::ObjectStatePrediction> predictions;
   double speed = 0.0;
   double front_offset = 0.0;  // from the object's position to its front
+  double width = 0.0;
   try {
     speed = perception_msgs::object_access::getVelocityMagnitude(prediction_object.object);
+    width = perception_msgs::object_access::getWidth(prediction_object.object);
     front_offset = 0.5 * perception_msgs::object_access::getLength(prediction_object.object) +
                    prediction_object.object.state.reference_point.translation_to_geometric_center.x;
   } catch (const std::exception& ex) {
-    RCLCPP_DEBUG(this->get_logger(), "Could not read velocity or length for lanelet prediction: %s", ex.what());
+    RCLCPP_DEBUG(this->get_logger(), "Could not read velocity, width or length for lanelet prediction: %s", ex.what());
   }
   const std::size_t sample_count = getPredictionSampleCount();
   const double max_travel_distance = speed * prediction_sample_interval_s_ * static_cast<double>(sample_count);
@@ -905,7 +941,7 @@ std::vector<perception_msgs::msg::ObjectStatePrediction> Lanelet2ObjectListPredi
     if ((motion_limits_enable_ || std::isfinite(stop_distance) || !leader.empty()) &&
         max_travel_distance > std::numeric_limits<double>::epsilon()) {
       std::tie(feasible, motion) = limitedMotionAlongRoute(
-          lanelet_route, match.start_arc_length, speed, prediction_sample_interval_s_, sample_count,
+          lanelet_route, match.start_arc_length, width, speed, prediction_sample_interval_s_, sample_count,
           motion_limits_enable_ ? motion_limits_max_lateral_acceleration_mps2_ : std::numeric_limits<double>::infinity(),
           max_longitudinal_acceleration_mps2_, max_longitudinal_deceleration_mps2_, stop_distance, leader,
           following_min_distance_m_);
