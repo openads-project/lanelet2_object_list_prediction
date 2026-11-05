@@ -335,9 +335,9 @@ class Lanelet2ObjectListPrediction : public rclcpp::Node {
   double lanelet_match_max_distance_m_ = 0.5;
 
   /**
-   * @brief Maximum yaw difference for accepting a lanelet match in radians (parameter)
+   * @brief Maximum yaw difference for accepting a lanelet match in degrees (parameter)
    */
-  double lanelet_match_max_yaw_diff_rad_ = 1.57079632679;
+  double lanelet_match_max_yaw_diff_deg_ = 90.0;
 
   /**
    * @brief Whether objects are matched to their nearest lanelets by the share of their footprint on them (parameter)

@@ -26,11 +26,12 @@ The predicted speed along each path is limited in curves so that the lateral acc
 1. The raw heading at every meter is the direction of a configurable (kHeadingChordLengthM) chord around it.
 2. The median over the raw headings within ± kHeadingMedianHalfWidth m ignores short steps and kinks, which only tilt a few of them. In a turn, the headings change steadily, so the median keeps it.
 3. The curvature at every meter is the change of the median heading per meter, from 1 m before to 1 m after it.
+4. To account for realistic driving behavior it is assumed that drivers take a curve flatter than the centerline, from its outer side to the inner side and back, as far as the lanes allow. A curve turning by `turn` over `arc` meters of centerline is driven on a circle of radius arc / turn + room / 2 * (1 + cos(turn / 2)) / (1 - cos(turn / 2)) instead of arc / turn, with `room` the narrowest lane width along it minus the object's width. The curvatures of each curve shrink by the ratio of both radii. This results in less conservative motion limits in steep curves like roundabouts.
 
 For stronger smoothing, increase `kHeadingMedianHalfWidth` to also ignore longer steps and kinks, at the cost of flattening S-curves shorter than the window, or increase `kHeadingChordLengthM` to average out more centerline jitter, at the cost of spreading sharp turns over the chord length and lowering their peak curvature.
 
 <p align="center">
-  <img src="../assets/curvature_median_filter.svg" alt="Curvature from the median-filtered centerline heading" width="800"/>
+  <img src="../assets/curvature_median_filter.svg" alt="Curvature from the median-filtered centerline heading and the path driven through the lane" width="800"/>
 </p>
 
 Before a curve, the object brakes with at most `max_longitudinal_deceleration_mps2`. After it, the object regains its current speed with at most `max_longitudinal_acceleration_mps2`. Predictions never get faster than the object is now. Both longitudinal limits are top-level parameters, as yielding uses them as well.
@@ -55,7 +56,7 @@ With `enable: false`, objects do not yield.
 
 Following is evaluated after yielding, in a single pass. All objects first get their nominal predictions, including yielding. Each object then slows down behind the nominal predictions of the other objects and behind ego's planned trajectory from `~/ego_data`. As followers react to nominal predictions only, slowing down does not propagate to further followers.
 
-Each prediction of another object is a possible leader, and so is ego. Ego's planned trajectory is used rather than its route, as following needs ego's motion over time. At each prediction time, ego is at the first trajectory point at or after it, while the trajectory covers it, in the map frame. A leader is on a route while it is inside one of the route's lanelets and its yaw differs from the lanelet's by at most `lanelet_match_max_yaw_diff_rad`, as for matching objects to lanelets, so crossing and oncoming traffic is not followed. It must start ahead of the follower's front, so traffic behind or beside the follower is not followed either. Per route, the closest leader counts.
+Each prediction of another object is a possible leader, and so is ego. Ego's planned trajectory is used rather than its route, as following needs ego's motion over time. At each prediction time, ego is at the first trajectory point at or after it, while the trajectory covers it, in the map frame. A leader is on a route while it is inside one of the route's lanelets and its yaw differs from the lanelet's by at most `lanelet_match_max_yaw_diff_deg`, as for matching objects to lanelets, so crossing and oncoming traffic is not followed. It must start ahead of the follower's front, so traffic behind or beside the follower is not followed either. Per route, the closest leader counts.
 
 Behind a leader, the speed is limited so that braking with at most `max_longitudinal_deceleration_mps2` reaches the leader's speed `min_distance_m` behind its rear, assuming the leader keeps its speed. When the leader leaves the route or speeds up, the follower regains its current speed with at most `max_longitudinal_acceleration_mps2`. Without a leader on a route, the prediction does not change.
 
